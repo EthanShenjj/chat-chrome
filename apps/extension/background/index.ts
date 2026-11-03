@@ -68,13 +68,13 @@ async function discoverAe(origin: string): Promise<AeConnection> {
   const tab = await aeTab(origin);
   if (!tab?.id) return { status: 'page-required', message: '请打开该 AE 环境并登录，然后重新识别' };
   try {
-    const request = { type: 'workspace.discover', origin };
+    const request = { type: 'workspace.discover.v2', origin };
     let result: AeConnection;
     try { result = await chrome.tabs.sendMessage(tab.id, request); if (!result?.status) throw new Error('旧版页面脚本不支持工作区识别'); }
     catch { await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }); result = await chrome.tabs.sendMessage(tab.id, request); }
     if (result.status === 'ready') { result.scope = ScopeSchema.parse(result.scope); if (result.scope.origin !== origin) throw new Error('环境不匹配'); }
     return result;
-  } catch { return { status: 'unavailable', message: '无法识别 AE 页面，请等待页面加载完成后重新识别' }; }
+  } catch (error) { const reason = errorText(error).replace(/https?:\/\/[^\s"<>]+/g, '该 AE 页面').slice(0, 180); return { status: 'unavailable', message: `无法识别 AE 页面：${reason}。请等待页面加载完成后重新识别` }; }
 }
 async function refreshAe(origin: string) {
   const result = await discoverAe(origin), scope = result.status === 'ready' ? result.scope! : null;
@@ -86,8 +86,8 @@ async function pageAt(tabId: number): Promise<PageContext | undefined> {
   const scope = state.config.binding; if (!scope) return;
   try {
     const tab = await chrome.tabs.get(tabId); if (!tab.url || new URL(tab.url).origin !== scope.origin) return;
-    try { return await chrome.tabs.sendMessage(tabId, { type: 'page.context', scope }); }
-    catch { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); return await chrome.tabs.sendMessage(tabId, { type: 'page.context', scope }); }
+    try { return await chrome.tabs.sendMessage(tabId, { type: 'page.context.v2', scope }); }
+    catch { await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] }); return await chrome.tabs.sendMessage(tabId, { type: 'page.context.v2', scope }); }
   } catch { return; }
 }
 async function currentPage() { const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }); state.page = tab?.id ? await pageAt(tab.id) : undefined; }
@@ -105,7 +105,7 @@ async function syncChanges() {
         if (changes.some(c => newerThan(c, change))) { if (d.status !== 'superseded') { d.status = 'superseded'; await saveDelivery(d); } continue; }
         if (['synced', 'blocked', 'unverified', 'superseded'].includes(d.status) || d.attempts >= 3) continue;
         d.status = 'received'; d.attempts++; await saveDelivery(d);
-        try { const result = await chrome.tabs.sendMessage(tab.id, { type: 'page.sync', change }); d.status = result.status; d.detail = result.detail; }
+        try { const result = await chrome.tabs.sendMessage(tab.id, { type: 'page.sync.v2', change }); d.status = result.status; d.detail = result.detail; }
         catch (e) { d.status = 'failed'; d.detail = errorText(e); }
         await saveDelivery(d);
       }

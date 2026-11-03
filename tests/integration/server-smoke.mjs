@@ -94,7 +94,7 @@ try {
   await website.getByRole('textbox', { name: '消息' }).waitFor(); await page.bringToFront();
   await page.getByText('服务器已完成 CLI 检测，浏览器无需本地执行器。', { exact: true }).waitFor({ timeout: 20000 });
   const aePage = await context.newPage(); await aePage.goto(`${modelOrigin}/fake-ae`); await aePage.getByRole('heading', { name: 'Fixture AE' }).waitFor();
-  await page.evaluate(async origin => { const [tab] = await chrome.tabs.query({ url: `${origin}/*` }); await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { globalThis.__aeChatContent = true; } }); }, modelOrigin);
+  await page.evaluate(async origin => { const [tab] = await chrome.tabs.query({ url: `${origin}/*` }); await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { globalThis.__aeChatContent = '0.2.2'; } }); }, modelOrigin);
   await page.bringToFront(); await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: 'AE 工作区', exact: true }).click();
   if (await page.getByRole('textbox', { name: '项目 ID', exact: true }).count() || await page.getByRole('textbox', { name: 'AE 账号标识', exact: true }).count()) throw new Error('Manual AE identity fields still present');
   await page.getByRole('textbox', { name: /^AE 环境/ }).fill(modelOrigin); await page.getByRole('button', { name: '保存环境地址', exact: true }).click();
