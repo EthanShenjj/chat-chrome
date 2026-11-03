@@ -1,0 +1,8 @@
+'use client';
+import { useState } from 'react';
+import Link from 'next/link';
+import { ArrowRight, ShieldCheck } from 'lucide-react';
+export default function LoginForm({ next }: { next: string }) {
+  const [id, setId] = useState(''), [password, setPassword] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  return <main className="login-page"><div className="login-intro"><Link className="cloud-brand" href="/">ae<span>✦</span><strong>Chat Agent</strong></Link><h1>登录一次，<br/>接着你的分析。</h1><p>网页与 Chrome 扩展使用同一个工作区。<br/>登录后回到扩展，即可继续对话。</p><div className="login-assurance"><ShieldCheck size={17}/>会话在服务端验证，账号与数据分别管理。</div></div><form className="login-form" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(''); try { const response = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ id, password }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || '登录失败，请重试'); location.replace(next); } catch (e) { setError(e instanceof Error ? e.message : '暂时无法登录，请稍后重试'); setBusy(false); } }}><h2>登录工作区</h2><p>使用管理员为你创建的服务账号。</p><label>账号<input name="username" autoComplete="username" value={id} onChange={e => setId(e.target.value)} required maxLength={64}/></label><label>密码<input name="password" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required maxLength={256}/></label>{error && <div className="login-error" role="alert">{error}</div>}<button className="cloud-primary" type="submit" disabled={busy}>{busy ? '正在验证…' : '登录'}<ArrowRight size={16}/></button><small>登录后可直接对话，扩展无需填写访问令牌。</small></form></main>;
+}

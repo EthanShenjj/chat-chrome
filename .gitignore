@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+.npm-cache/
+test-results/
+playwright-report/
+artifacts/browser-failure.png
+artifacts/login-failure.png
+*.log
+.env*
+!.env.example
+.server-data/
+apps/server/.next/
+apps/server/public/ae-chat-extension.zip
+*.tsbuildinfo
+.DS_Store
+.vercel/

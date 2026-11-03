@@ -1,0 +1,22 @@
+services:
+  agent:
+    build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      AE_CHAT_ENCRYPTION_KEY: ${AE_CHAT_ENCRYPTION_KEY:?Set a persistent encryption key of at least 32 characters}
+      AE_CHAT_ALLOWED_ORIGINS: ${AE_CHAT_ALLOWED_ORIGINS:-https://api.openai.com}
+      AE_CHAT_EXTENSION_IDS: ${AE_CHAT_EXTENSION_IDS:-}
+      AE_CHAT_PUBLIC_URL: ${AE_CHAT_PUBLIC_URL:-}
+      AE_CHAT_STDIO_COMMANDS: ${AE_CHAT_STDIO_COMMANDS:-}
+    volumes:
+      - agent-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  agent-data:

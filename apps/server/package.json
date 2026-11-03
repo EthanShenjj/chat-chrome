@@ -1,0 +1,4 @@
+{
+  "name": "@ae-chat/server", "version": "0.2.0", "private": true,
+  "scripts": { "dev": "next dev --hostname 0.0.0.0", "build": "next build --webpack", "start": "next start --hostname 0.0.0.0" }
+}

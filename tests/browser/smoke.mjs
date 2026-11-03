@@ -1,0 +1,38 @@
+import { chromium } from '@playwright/test';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { tmpdir, homedir } from 'node:os';
+import { resolve, join } from 'node:path';
+const extension = resolve('dist/extension'), profile = await mkdtemp(join(tmpdir(), 'ae-chat-browser-'));
+const executablePath = process.env.CHROMIUM_PATH || join(homedir(), 'Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing');
+const context = await chromium.launchPersistentContext(profile, { executablePath, headless: true, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`], viewport: { width: 420, height: 880 } });
+await mkdir('artifacts', { recursive: true });
+const errors = []; context.on('page', page => page.on('pageerror', e => errors.push(e.message)));
+try {
+  const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+  const id = new URL(worker.url()).host;
+  const page = await context.newPage(); await page.goto(`chrome-extension://${id}/sidepanel.html`);
+  try { await page.getByRole('heading', { name: '登录后，继续你的分析。' }).waitFor({ timeout: 10000 }); } catch (e) { console.log('Page:', await page.locator('body').innerText(), 'Errors:', errors); await page.screenshot({ path: 'artifacts/browser-failure.png' }); throw e; }
+  if (!(await page.getByRole('textbox', { name: '消息' }).isDisabled())) throw new Error('Anonymous composer was enabled');
+  if (!(await page.getByRole('button', { name: '发送消息' }).isDisabled())) throw new Error('Anonymous send was enabled');
+  await page.screenshot({ path: 'artifacts/sidepanel.png', fullPage: true });
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('heading', { name: '连接线上工作区' }).waitFor();
+  await page.getByRole('button', { name: '模型连接', exact: true }).click();
+  await page.getByRole('heading', { name: '选择你的思考伙伴' }).waitFor();
+  await page.getByRole('button', { name: 'AE 工作区', exact: true }).click();
+  await page.getByRole('heading', { name: '连接真实的工作区' }).waitFor();
+  await page.getByRole('button', { name: 'MCP 工具', exact: true }).click();
+  await page.getByRole('heading', { name: '把熟悉的工具带进来' }).waitFor();
+  await page.getByRole('combobox', { name: '连接方式' }).selectOption('stdio');
+  await page.getByRole('textbox', { name: '服务器工具别名' }).waitFor();
+  await page.setViewportSize({ width: 1100, height: 850 }); await page.getByRole('button', { name: '模型连接', exact: true }).click();
+  await page.screenshot({ path: 'artifacts/settings.png', fullPage: true });
+  const result = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'state.get' }));
+  if (!result.ok || !result.result.session) throw new Error('Extension UI could not reach its service worker');
+  const denied = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'shell.exec', command: 'whoami' }));
+  if (denied.ok) throw new Error('Unauthorized method was accepted');
+  await page.getByRole('button', { name: '连接', exact: true }).click();
+  await page.getByRole('alert').waitFor();
+  if (errors.length) throw new Error(errors.join('\n'));
+  console.log(JSON.stringify({ passed: true, extensionId: id, checks: ['MV3 service worker', 'side panel', 'anonymous chat blocked', 'settings navigation', 'MCP transport form', 'UI/background messaging', 'unauthorized method rejected', 'unconfigured cloud service feedback'], screenshots: ['artifacts/sidepanel.png', 'artifacts/settings.png'] }, null, 2));
+} finally { await context.close(); await rm(profile, { recursive: true, force: true }); }

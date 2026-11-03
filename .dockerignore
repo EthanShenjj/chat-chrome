@@ -1,0 +1,9 @@
+node_modules
+.npm-cache
+.server-data
+**/.next
+release
+dist
+artifacts
+.env*
+.git

@@ -1,0 +1,28 @@
+import { mkdir, copyFile, writeFile, chmod, rm, cp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { option, findNode, shellQuote } from './host-utils.mjs';
+const extensionId = option('extension-id');
+if (!extensionId || !/^[a-p]{32}$/.test(extensionId)) throw new Error('请传入 Chrome 扩展管理页显示的 ID：--extension-id=32位扩展ID');
+if (!['darwin', 'linux'].includes(platform())) throw new Error('此安装器目前支持 macOS 和 Linux');
+const appDir = resolve(option('install-dir') ?? join(homedir(), '.ae-chat-agent/app'));
+const manifestDir = option('manifest-dir') ? resolve(option('manifest-dir')) : platform() === 'darwin' ? join(homedir(), 'Library/Application Support/Google/Chrome/NativeMessagingHosts') : join(homedir(), '.config/google-chrome/NativeMessagingHosts');
+const manifestPath = join(manifestDir, 'com.ae.chat.agent.json');
+if (process.argv.includes('--uninstall')) { await rm(manifestPath, { force: true }); console.log('已注销 Native Messaging。配置、凭证和操作记录保留。'); process.exit(0); }
+const projectRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+const bundled = process.argv.includes('--bundled');
+const node = bundled ? join(projectRoot, 'runtime/node') : findNode();
+await mkdir(join(appDir, 'runtime'), { recursive: true, mode: 0o700 });
+await copyFile(node, join(appDir, 'runtime/node'));
+await chmod(join(appDir, 'runtime/node'), 0o755);
+const npmRoot = bundled ? join(projectRoot, 'runtime/node_modules/npm') : resolve(node, '../../lib/node_modules/npm');
+if (!existsSync(npmRoot)) throw new Error('所选 Node 运行时缺少 npm，无法提供对话安装 CLI 能力');
+await cp(npmRoot, join(appDir, 'runtime/node_modules/npm'), { recursive: true });
+await copyFile(join(projectRoot, bundled ? 'host.cjs' : 'dist/native-host/host.cjs'), join(appDir, 'host.cjs'));
+const launcher = join(appDir, 'ae-chat-host');
+await writeFile(launcher, `#!/bin/sh\nexport PATH=${shellQuote(join(appDir, 'runtime'))}:"$PATH"\nexec ${shellQuote(join(appDir, 'runtime/node'))} ${shellQuote(join(appDir, 'host.cjs'))} "$@"\n`, { mode: 0o755 });
+await mkdir(manifestDir, { recursive: true });
+await writeFile(manifestPath, JSON.stringify({ name: 'com.ae.chat.agent', description: 'AE Chat Agent Native Host', path: launcher, type: 'stdio', allowed_origins: [`chrome-extension://${extensionId}/`] }, null, 2), { mode: 0o600 });
+console.log(`执行器已安装：${appDir}\nChrome 注册文件：${manifestPath}\n请在扩展设置中连接并添加模型。AE CLI 可稍后在对话中安装；已有 CLI 也可直接配置路径。`);
