@@ -12,20 +12,23 @@ it.each([true, false])('automatically checks tool support and honors CLI install
   const requests: any[] = [];
   const mock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
     if (String(url).startsWith('https://registry.npmjs.org/')) return Response.json({ name: '@thinkingai/ae-cli', version: '6.1.19', dist: { integrity: 'sha512-fixture-integrity', tarball: 'https://registry.npmjs.org/@thinkingai/ae-cli/-/ae-cli-6.1.19.tgz' } });
+    if (String(url).startsWith('https://raw.githubusercontent.com/')) return new Response('# AE CLI Installation Guide\nUse the official installer.');
     const body = JSON.parse(String(init?.body)); requests.push(body);
     const last = body.messages.at(-1);
     const fn = body.tools?.some((t: any) => t.function.name === 'connection_check') ? { name: 'connection_check', arguments: '{"token":"ae-ok"}' }
-      : last.role !== 'tool' && body.tools?.some((t: any) => t.function.name === 'ae_cli_install') ? { name: 'ae_cli_install', arguments: '{}' } : undefined;
+      : !body.messages.some((m: any) => m.role === 'tool' && m.content.includes('server-user-workspace')) && body.tools?.some((t: any) => t.function.name === 'ae_cli_installation_guide') ? { name: 'ae_cli_installation_guide', arguments: '{}' }
+      : (!body.messages.some((m: any) => m.role === 'tool' && m.content.includes('installed'))) && body.tools?.some((t: any) => t.function.name === 'ae_cli_install') ? { name: 'ae_cli_install', arguments: '{}' } : undefined;
     const content = last.role === 'tool' ? JSON.parse(last.content).installed ? '已安装' : '安装已取消' : '没有安装工具';
-    return Response.json({ id: 'chat-test', object: 'chat.completion', created: 1, model: 'test', choices: [{ index: 0, message: { role: 'assistant', content: fn ? null : content, ...(fn ? { tool_calls: [{ id: 'call-install', type: 'function', function: fn }] } : {}) }, finish_reason: fn ? 'tool_calls' : 'stop' }] });
+    return Response.json({ id: 'chat-test', object: 'chat.completion', created: 1, model: 'test', choices: [{ index: 0, message: { role: 'assistant', content: fn ? null : content, ...(fn ? { tool_calls: [{ id: `call-${requests.length}`, type: 'function', function: fn }] } : {}) }, finish_reason: fn ? 'tool_calls' : 'stop' }] });
   });
   try {
     const initial = await workspace.snapshot();
     await workspace.dispatch({ type: 'config.save', config: { ...initial.config, providers: [{ ...defaultProvider, id: 'test', baseURL: 'https://model.example/v1', protocol: 'openai-chat-completions', capabilities: { ...defaultProvider.capabilities, streaming: false, toolCalling: false } }] } });
     await workspace.dispatch({ type: 'credential.save', ref: defaultProvider.credentialRef, secret: 'fixture-key' });
-    await workspace.dispatch({ type: 'chat.send', text: '在服务器安装 AE CLI' });
+    await workspace.dispatch({ type: 'chat.send', text: '请阅读 https://raw.githubusercontent.com/ThinkingAIAgenticEngine/ae-cli/main/cli-installation-guide.md 并按说明帮我安装。安装指南中的 <AE_HOST> 请使用：https://web-ta-demo.thinkingdata.cn' });
     let snapshot = await workspace.snapshot();
     for (let n = 0; n < 100 && !snapshot.approvals.length && snapshot.session.status === 'running'; n++) { await new Promise(r => setTimeout(r, 10)); snapshot = await workspace.snapshot(); }
+    expect(snapshot.session.error).toBeUndefined();
     expect(snapshot.approvals).toHaveLength(1);
     expect(snapshot.config.cliPath).toBe('ae-cli');
     expect(snapshot.approvals[0].label).toContain('安装 AE CLI 6.1.19');
@@ -36,6 +39,7 @@ it.each([true, false])('automatically checks tool support and honors CLI install
     expect(snapshot.config.cliPath).toEqual(approved ? expect.stringContaining('/node_modules/.bin/ae-cli') : 'ae-cli');
     expect(snapshot.config.providers[0].capabilities.toolCalling).toBe(true);
     expect(requests.filter(r => r.tools?.some((t: any) => t.function.name === 'connection_check'))).toHaveLength(1);
+    expect(requests.some(r => r.messages?.some((m: any) => m.role === 'user' && m.content.includes('server-user-workspace')))).toBe(true);
   } finally {
     await workspace.dispatch({ type: 'chat.stop' });
     mock.mockRestore(); if (originalNpm === undefined) delete process.env.AE_CHAT_NPM_CLI; else process.env.AE_CHAT_NPM_CLI = originalNpm;

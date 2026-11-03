@@ -11,6 +11,7 @@ import { withExecutionContext, type ExecutionContext } from '../../../packages/e
 import { aeCredentialRef } from '../../../packages/execution-service/cli-runner/index';
 import { modelRequest } from '../../../packages/execution-service/model-transport/index';
 import { usesVendorReasoning } from '../../../packages/contracts/provider-presets';
+import { readInstallationGuide, installationGuideURL } from '../../../packages/execution-service/installer/guide';
 
 const freshSession = (): Session => ({ id: randomUUID(), title: '新的对话', messages: [], history: [], status: 'idle', updatedAt: Date.now() });
 interface WorkspaceData { sessionId: string; sessions: Session[]; providerId: string; }
@@ -133,9 +134,19 @@ export class CloudWorkspace {
         catch (error) { toolStatus = `当前模型的自动工具调用检查未通过：${errorText(error)}。仍可普通对话；若用户要求安装 CLI 或执行操作，说明这个具体原因，并请用户在模型连接中检查配置后重新测试工具调用。`; }
       }
       if (signal.aborted) throw new Error('任务已停止');
+      const probeCli = async () => { try { return { installed: true, ...await this.host.dispatch('cli.probe') as object }; } catch (error) { return { installed: false, message: errorText(error) }; } };
+      let setupContext: unknown;
+      if (text.includes(installationGuideURL)) {
+        // Fulfil the explicitly requested read before generation, even when old
+        // conversation turns incorrectly claimed the guide could not be read.
+        let guide: unknown;
+        try { guide = await readInstallationGuide(signal); } catch (error) { guide = { source: installationGuideURL, error: errorText(error) }; }
+        setupContext = { guide, cliStatus: await probeCli(), aeOrigin: scope?.origin, hostPolicy: '所有 AE 业务工具均显式使用当前绑定 origin，不依赖全局 AE_HOST 配置。CLI 安装不代表 AE 已认证或 Skills 已安装。', executionTarget: 'server-user-workspace', tools: provider.capabilities.toolCalling ? ['ae_cli_installation_guide', 'ae_cli_status', 'ae_cli_install'] : [], toolStatus };
+      }
       const mcpTools = [];
       if (provider.capabilities.toolCalling) {
-        mcpTools.push({ name: 'ae_cli_status', description: '检测服务器上的 AE CLI，不读取用户电脑。', schema: { type: 'object', properties: {}, additionalProperties: false }, execute: async () => { try { return await this.host.dispatch('cli.probe'); } catch (e) { return { installed: false, message: errorText(e) }; } } });
+        mcpTools.push({ name: 'ae_cli_installation_guide', description: '读取官方 AE CLI 安装指南。用户提供 ThinkingAIAgenticEngine/ae-cli 的 cli-installation-guide.md 链接并要求安装时，先调用此工具；无需用户粘贴文档。只读取固定官方地址。', schema: { type: 'object', properties: {}, additionalProperties: false }, execute: async () => readInstallationGuide(signal) });
+        mcpTools.push({ name: 'ae_cli_status', description: '检测服务器上的 AE CLI，不读取用户电脑。', schema: { type: 'object', properties: {}, additionalProperties: false }, execute: probeCli });
         mcpTools.push({ name: 'ae_cli_install', description: '在服务器的当前用户工作区安装 AE CLI；展示来源版本并请求用户确认。version 可省略。', schema: { type: 'object', properties: { version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?$' } }, additionalProperties: false }, execute: async (args: Record<string, unknown>) => {
           const plan: any = await this.host.dispatch('cli.install.plan', args);
           if (!(await this.approve(taskId, `在服务器安装 AE CLI ${plan.version}`, plan, signal))) return { installed: false, message: '安装已取消' };
@@ -154,7 +165,7 @@ export class CloudWorkspace {
         }
       }
       let lastSave = 0;
-      const result = await runAgent({ provider, scope, page: this.page, text, history: session.history, signal, mcpTools, toolStatus,
+      const result = await runAgent({ provider, scope, page: this.page, text, history: session.history, signal, mcpTools, toolStatus, setupContext,
         fetch: async (input, init) => { const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url; return modelRequest(provider, url.endsWith('/responses') ? '/responses' : '/chat/completions', JSON.parse(String(init?.body || '{}')), init?.signal ?? signal); },
         execute: async (tool: AeTool, args) => {
           if (signal.aborted) throw new Error('任务已停止'); if (!scope) throw new Error('请先绑定 AE 工作区');
