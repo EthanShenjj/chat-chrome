@@ -4,11 +4,35 @@
   "version": "0.2.0",
   "description": "连接线上 Agent，通过服务器 CLI 管理 AE 报表，跟踪保存与页面同步。无需本地执行器。",
   "minimum_chrome_version": "120",
-  "permissions": ["sidePanel", "storage", "identity", "activeTab", "scripting", "alarms"],
-  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-  "background": {"service_worker": "background.js", "type": "module"},
-  "action": {"default_title": "打开 AE Chat Agent"},
-  "side_panel": {"default_path": "sidepanel.html"},
-  "options_ui": {"page": "options.html", "open_in_tab": true},
-  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'self'"}
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "identity",
+    "activeTab",
+    "scripting",
+    "alarms"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "打开 AE Chat Agent"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArcv9OvfO4MpphDKUXcfd3bJTdDlmR9jUmglfkUvLs7XQx0O0ceeYy9I+uBw6JLu18jjmFDWU96I2VQRf91+gEx8DSO+qUxZqfurU6Kbl2Rv2QdYzxenR7h9fPby+5YCVUSQBEwytc1EXfPb5Jf7oi5ROvCXrTGcNJD90ygJKg5lrfpuxenYyMohJajjnaQoy+8XY+8vu9tSNd3x9CzxQ+aJSEkMsngeMptlSLohTluY52XYWGE1ihFHbVhb59rHpmraqfWFACjFKGQ6QMDDscapF9B+M+yDMdrmxJu6pIg3tuZXyF06psprs1YR2J5vsNkwa68zpczZ4gZJFg/cAfwIDAQAB"
 }

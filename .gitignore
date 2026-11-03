@@ -11,7 +11,9 @@ artifacts/login-failure.png
 !.env.example
 .server-data/
 apps/server/.next/
+apps/gateway/.next/
 apps/server/public/ae-chat-extension.zip
 *.tsbuildinfo
 .DS_Store
 .vercel/
+.vercel

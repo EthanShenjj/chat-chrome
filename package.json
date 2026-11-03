@@ -10,6 +10,8 @@
     "build": "npm run build:extension && npm run build:server",
     "build:extension": "node scripts/build.mjs",
     "build:server": "node scripts/run-next.mjs build && node scripts/prepare-server.mjs",
+    "build:gateway": "node scripts/run-gateway.mjs build",
+    "server:provision": "node scripts/provision-sandbox.mjs",
     "dev": "node scripts/run-next.mjs dev",
     "dev:extension": "node scripts/build.mjs --watch",
     "start": "node scripts/start-server.mjs",
@@ -25,6 +27,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@openai/agents": "0.21.0",
+    "@vercel/sandbox": "3.9.1",
     "ajv": "^8.17.1",
     "idb": "^8.0.3",
     "lucide-react": "^0.468.0",

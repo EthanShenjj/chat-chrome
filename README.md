@@ -56,7 +56,7 @@ npm start
 
 1. 构建后，从服务首页下载扩展 ZIP，或使用 `apps/server/public/ae-chat-extension.zip`。
 2. 解压，打开 `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序。开发阶段也可直接选择本项目 `dist/extension`。
-3. 将扩展 ID 加入服务端 `AE_CHAT_EXTENSION_IDS` 并重启服务。
+3. 将扩展 ID 加入服务端 `AE_CHAT_EXTENSION_IDS` 并重启服务。本仓库内置公开的 manifest key，解压安装的固定 ID 为 `bhcepkllnlfooedkachnelhkdpnlageo`；该 key 不包含私钥。
 4. 在扩展“线上服务”设置中仅填写服务地址，点击“保存服务地址”并允许访问该域名。已在服务网页登录时，扩展自动恢复身份；未登录则点击“前往网页登录”。扩展不再要求填写访问令牌。
 5. 添加模型、API Key，运行连接和工具调用测试。通过工具测试后才会启用执行能力。
 6. 对话中说 **“帮我安装 AE CLI”**。Agent 展示官方 npm 来源、精确版本和服务器目录，经确认后安装到当前账号的服务器工作区。不会安装到用户电脑。
@@ -73,6 +73,27 @@ npm start
 - 每个 API 请求及每次 SSE 状态推送前都验证服务端会话。Cookie 写操作检查同源；授权码不能重复使用，扩展回调必须匹配管理员批准的 ID。
 - 默认不再接受旧版手填访问令牌登录。仅有旧 API 集成需要迁移时，可在服务端显式设置 `AE_CHAT_ALLOW_LEGACY_TOKENS=true`；浏览器扩展始终使用网页登录授权流程。
 - 当前实现为本项目的服务账号登录，没有修改或接入 AE 的现有登录系统；AE Token 仍仅用于 AE 业务工具授权。
+
+## Vercel 部署
+
+采用 **Next.js 网关 + 同项目的持久化 Vercel Sandbox**。`apps/gateway` 部署为 Vercel Function，转发网页、API、静态资源和 SSE；原有 Next.js 执行服务在 Sandbox 内运行。网关只恢复管理员已创建的命名 Sandbox，匿名请求不会创建执行环境。Sandbox 入口额外校验随机共享密钥，用户登录、Cookie 和扩展 PKCE 授权仍由执行服务验证。
+
+Vercel 项目设置：Root Directory 为 `apps/gateway`，Node.js 22，Install Command 为 `cd ../.. && npm ci --no-audit --no-fund`，Build Command 为 `cd ../.. && npm run build:gateway`。启用项目 OIDC，在 Production 配置 `.env.example` 的密钥、公网 URL、允许的来源和扩展 ID；`AE_CHAT_GATEWAY_SECRET` 需要独立生成至少 32 字符的随机值。
+
+初始化执行服务（Node.js 22.18+）：
+
+```sh
+vercel link
+npm run build
+npm run server:provision
+vercel deploy --prod
+```
+
+`vercel link` 将项目 OIDC 写入被忽略的 `.env.local`。初始化脚本还从被忽略的 `.env.production.local` 读取生产环境配置；首次运行需提供 `AE_CHAT_BOOTSTRAP_RECORD`（由 `scripts/server-user.mjs` 生成的用户记录 JSON，包含密码摘要，不应包含明文密码）。账号文件只在首次缺失时写入。实际发布的初始密码保存在部署机器的 `release/production-login.txt`，不会上传 GitHub 或放入公开构建产物。
+
+每次更新执行层，需要先 `npm run build && npm run server:provision`，再部署网关。执行服务的数据位于独立的 `ae-chat/data`，更新代码保留用户和会话；更新期间应避免进行中的写操作。仅推送 GitHub 或重新部署网关不会更新 Sandbox 内的执行层代码。
+
+Sandbox 使用一个 1 vCPU 实例，单次会话上限设为 30 分钟。会话结束后自动保存文件系统，下次请求恢复文件并重启服务，首次恢复可能较慢；正在执行的任务可能中断，系统按结果未知处理且不自动重放写操作。保留最新一个快照且设置不自动过期；快照不替代独立备份。Sandbox 计入 Vercel 账号配额，Hobby 配额耗尽后不可继续恢复，需要等待配额恢复或由管理员调整方案。
 
 ## Docker 部署
 
