@@ -127,6 +127,12 @@ export class CloudWorkspace {
   private async executeTask(provider: ProviderConfig, text: string, session: Session, answer: Session['messages'][number], controller: AbortController) {
     const taskId = `${session.id}:${randomUUID()}`, scope = session.scope ? structuredClone(session.scope) : undefined, signal = controller.signal;
     try {
+      let toolStatus: string | undefined;
+      if (!provider.capabilities.toolCalling) {
+        try { await this.testProvider(provider.id, true, signal); provider.capabilities.toolCalling = true; }
+        catch (error) { toolStatus = `当前模型的自动工具调用检查未通过：${errorText(error)}。仍可普通对话；若用户要求安装 CLI 或执行操作，说明这个具体原因，并请用户在模型连接中检查配置后重新测试工具调用。`; }
+      }
+      if (signal.aborted) throw new Error('任务已停止');
       const mcpTools = [];
       if (provider.capabilities.toolCalling) {
         mcpTools.push({ name: 'ae_cli_status', description: '检测服务器上的 AE CLI，不读取用户电脑。', schema: { type: 'object', properties: {}, additionalProperties: false }, execute: async () => { try { return await this.host.dispatch('cli.probe'); } catch (e) { return { installed: false, message: errorText(e) }; } } });
@@ -148,7 +154,7 @@ export class CloudWorkspace {
         }
       }
       let lastSave = 0;
-      const result = await runAgent({ provider, scope, page: this.page, text, history: session.history, signal, mcpTools,
+      const result = await runAgent({ provider, scope, page: this.page, text, history: session.history, signal, mcpTools, toolStatus,
         fetch: async (input, init) => { const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url; return modelRequest(provider, url.endsWith('/responses') ? '/responses' : '/chat/completions', JSON.parse(String(init?.body || '{}')), init?.signal ?? signal); },
         execute: async (tool: AeTool, args) => {
           if (signal.aborted) throw new Error('任务已停止'); if (!scope) throw new Error('请先绑定 AE 工作区');
@@ -162,14 +168,15 @@ export class CloudWorkspace {
     } catch (e) { session.status = signal.aborted ? 'interrupted' : 'failed'; session.error = signal.aborted ? '已停止模型。已提交的保存请以操作记录为准' : errorText(e); }
     finally { this.active = undefined; await this.persist(); }
   }
-  private async testProvider(id: string, tools: boolean) {
+  private async testProvider(id: string, tools: boolean, signal?: AbortSignal) {
     const config = await readConfig(), provider = config.providers.find(p => p.id === id); if (!provider) throw new Error('请先保存模型');
     const fn = { name: 'connection_check', description: 'Connection test only.', parameters: { type: 'object', properties: { token: { type: 'string', enum: ['ae-ok'] } }, required: ['token'], additionalProperties: false } };
     const prompt = tools ? 'Call connection_check with token ae-ok.' : 'Reply OK.';
     const body = provider.protocol === 'openai-responses'
       ? { input: prompt, stream: false, ...(tools ? { tools: [{ type: 'function', ...fn, strict: true }], tool_choice: { type: 'function', name: fn.name } } : {}) }
       : { messages: [{ role: 'user', content: prompt }], stream: false, ...(tools ? { tools: [{ type: 'function', function: fn }], tool_choice: usesVendorReasoning(provider) ? 'auto' : { type: 'function', function: { name: fn.name } } } : {}) };
-    const response = await modelRequest(provider, provider.protocol === 'openai-responses' ? '/responses' : '/chat/completions', body, AbortSignal.timeout(90000));
+    const timeout = AbortSignal.timeout(90000);
+    const response = await modelRequest(provider, provider.protocol === 'openai-responses' ? '/responses' : '/chat/completions', body, signal ? AbortSignal.any([signal, timeout]) : timeout);
     const result = await response.json() as any; if (!response.ok || result.error) throw new Error(result.error?.message || `HTTP ${response.status}`);
     if (tools) {
       const call = provider.protocol === 'openai-responses' ? result.output?.find((o: any) => o.type === 'function_call') : result.choices?.[0]?.message?.tool_calls?.[0]?.function;

@@ -68,8 +68,7 @@ try {
   await page.getByRole('textbox', { name: 'API Key' }).fill('cloud-test-provider-key');
   await page.getByRole('button', { name: '保存连接', exact: true }).click();
   await page.getByRole('status').filter({ hasText: '模型配置已保存' }).waitFor();
-  await page.getByRole('button', { name: '测试工具调用', exact: true }).click();
-  await page.getByRole('status').filter({ hasText: '工具调用通过' }).waitFor();
+  // The first chat checks tool support automatically; no settings-page test click.
   await page.getByRole('navigation').getByRole('button', { name: '返回对话', exact: true }).click();
   await page.getByRole('textbox', { name: '消息' }).fill('检查服务器上的 AE CLI');
   await page.getByRole('button', { name: '发送消息' }).click();
