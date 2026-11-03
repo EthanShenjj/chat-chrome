@@ -1,0 +1,17 @@
+.git/
+.vercel/
+.npm-cache/
+node_modules/
+**/node_modules/
+**/.next/
+.server-data/
+.env*
+release/
+dist/
+artifacts/
+test-results/
+playwright-report/
+apps/server/public/ae-chat-extension.zip
+*.log
+*.tsbuildinfo
+.DS_Store
