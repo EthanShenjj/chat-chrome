@@ -15,8 +15,9 @@ const archivePath = resolve('release/worker.tar.gz');
 execFileSync('tar', ['-czf', archivePath, '-C', 'apps/server/.next/standalone', '.'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
 const archive = await readFile(archivePath), revision = createHash('sha256').update(archive).digest('hex').slice(0, 24);
 console.log(`Prepared execution bundle: ${Math.ceil(archive.length / 1024 / 1024)} MiB`);
-const sandbox = await Sandbox.getOrCreate({
-  name: process.env.AE_CHAT_SANDBOX_NAME || 'chat-chrome-production',
+const sandboxName = process.env.AE_CHAT_SANDBOX_NAME || 'chat-chrome-production';
+let sandbox = await Sandbox.getOrCreate({
+  name: sandboxName,
   image: 'vercel/sandbox/universal', ports: [3000],
   timeout: 30 * 60 * 1000, resources: { vcpus: 1 },
   persistent: true, snapshotExpiration: 0, keepLastSnapshots: { count: 1, expiration: 0 },
@@ -41,7 +42,10 @@ await run('node', ['-e', `
     fs.writeFileSync(path, JSON.stringify([record]), { mode: 0o600, flag: 'wx' });
   }
 `], { env: { AE_CHAT_BOOTSTRAP_RECORD: process.env.AE_CHAT_BOOTSTRAP_RECORD || '' } });
-// Stop the old listener before switching releases; user data is outside releases.
-await run('sh', ['-c', `if [ -L '${sandboxRoot}/current' ]; then fuser -k 3000/tcp >/dev/null 2>&1 || true; fi; ln -sfn '${release}' '${sandboxRoot}/next'; mv -Tf '${sandboxRoot}/next' '${sandboxRoot}/current'`]);
+// Snapshot prepared files and stop the old process using Sandbox's own lifecycle.
+// A resumed VM restores files only, so no platform-specific kill utility is needed.
+await sandbox.stop();
+sandbox = await Sandbox.get({ name: sandboxName, resume: true });
+await run('sh', ['-c', `ln -sfn '${release}' '${sandboxRoot}/next'; mv -Tf '${sandboxRoot}/next' '${sandboxRoot}/current'`]);
 await startWorker(sandbox);
 console.log(`Execution service ready: ${sandbox.name} (${revision})`);
