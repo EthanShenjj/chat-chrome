@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { atomicWrite, credential } from '../storage';
+import { readConfig } from '../storage';
+import { sameAeIdentity } from '../../contracts/index';
 export interface ProcessResult { stdout: string; stderr: string; code: number | null; }
 export const aeCredentialRef = (origin: string) => `ae-${createHash('sha256').update(origin).digest('hex').slice(0, 24)}`;
 export async function runProcess(executable: string, args: string[], timeout = 90000): Promise<ProcessResult> {
@@ -16,7 +18,7 @@ export async function runProcess(executable: string, args: string[], timeout = 9
     env.HOME = temporaryHome; env.XDG_CONFIG_HOME = join(temporaryHome, '.config');
     const hostIndex = args.indexOf('--host');
     if (hostIndex >= 0) {
-      try { const token = await credential(aeCredentialRef(args[hostIndex + 1])); await atomicWrite(join(temporaryHome, '.ae-config/cli-token.json'), { url: args[hostIndex + 1], token }); }
+      try { const token = await credential(aeCredentialRef(args[hostIndex + 1])); const config = await readConfig(); if (config.aeOrigin && (!config.binding || !sameAeIdentity(config.binding, config.aeAuthScope))) throw new Error('AE 账号或租户已变化，请为当前识别到的账号重新配置 CLI 授权'); await atomicWrite(join(temporaryHome, '.ae-config/cli-token.json'), { url: args[hostIndex + 1], token }); }
       catch (e) { if (!(e instanceof Error) || !e.message.includes('尚未保存')) { await rm(temporaryHome, { recursive: true, force: true }); throw e; } }
     }
   }

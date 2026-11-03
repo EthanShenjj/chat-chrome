@@ -1,7 +1,7 @@
 import { AuthenticationError, CloudBridge, type ServiceConnection } from './cloud';
 import { LoginRequiredError, resumeWebLogin } from './login';
 import { journal } from './db';
-import { defaultConfig, errorText, safeURL, type Snapshot, type Session, type PageContext, type Delivery } from '../../../packages/contracts/index';
+import { defaultConfig, errorText, safeURL, sameScope, ScopeSchema, type AeConnection, type Snapshot, type Session, type PageContext, type Delivery } from '../../../packages/contracts/index';
 import { matchesPage, newerThan } from '../../../packages/sync-engine/index';
 
 const emptySession = (): Session => ({ id: crypto.randomUUID(), title: '新的对话', messages: [], history: [], status: 'idle', updatedAt: Date.now() });
@@ -34,7 +34,7 @@ async function markLoggedOut() {
 async function merge(snapshot: Snapshot) {
   if (!connection.token) return;
   const sameUser = state.auth?.userId === snapshot.auth?.userId;
-  state = { ...snapshot, page: sameUser ? state.page : undefined, deliveries: sameUser ? state.deliveries : [], connected: true, serviceURL: connection.url, auth: snapshot.auth ?? { status: 'authenticated' } };
+  state = { ...snapshot, aeConnection: sameUser ? state.aeConnection : undefined, page: sameUser ? state.page : undefined, deliveries: sameUser ? state.deliveries : [], connected: true, serviceURL: connection.url, auth: snapshot.auth ?? { status: 'authenticated' } };
   broadcast(); void syncChanges();
 }
 async function restoreLogin() {
@@ -51,13 +51,36 @@ async function connect(): Promise<Snapshot> {
       let snapshot: Snapshot;
       try { snapshot = await bridge.request<Snapshot>('state.get'); }
       catch (e) { if (!(e instanceof AuthenticationError)) throw e; await restoreLogin(); snapshot = await bridge.request<Snapshot>('state.get'); }
-      await merge(snapshot); await currentPage(); bridge.watch(); return state;
+      await merge(snapshot); if (state.config.aeOrigin && state.session.status !== 'running') await refreshAe(state.config.aeOrigin); await currentPage(); bridge.watch(); return state;
     } catch (e) {
       if (e instanceof LoginRequiredError || e instanceof AuthenticationError) { await markLoggedOut(); return state; }
       state.connected = false; broadcast(); throw e;
     }
   })();
   try { return await connecting; } finally { connecting = undefined; }
+}
+async function aeTab(origin: string) {
+  const tabs = (await chrome.tabs.query({})).filter(tab => tab.url && new URL(tab.url).origin === origin);
+  return tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))[0];
+}
+async function discoverAe(origin: string): Promise<AeConnection> {
+  if (!(await chrome.permissions.contains({ origins: [`${origin}/*`] }))) return { status: 'page-required', message: '请先允许扩展访问这个 AE 环境' };
+  const tab = await aeTab(origin);
+  if (!tab?.id) return { status: 'page-required', message: '请打开该 AE 环境并登录，然后重新识别' };
+  try {
+    const request = { type: 'workspace.discover', origin };
+    let result: AeConnection;
+    try { result = await chrome.tabs.sendMessage(tab.id, request); if (!result?.status) throw new Error('旧版页面脚本不支持工作区识别'); }
+    catch { await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }); result = await chrome.tabs.sendMessage(tab.id, request); }
+    if (result.status === 'ready') { result.scope = ScopeSchema.parse(result.scope); if (result.scope.origin !== origin) throw new Error('环境不匹配'); }
+    return result;
+  } catch { return { status: 'unavailable', message: '无法识别 AE 页面，请等待页面加载完成后重新识别' }; }
+}
+async function refreshAe(origin: string) {
+  const result = await discoverAe(origin), scope = result.status === 'ready' ? result.scope! : null;
+  const current = state.config.binding;
+  if (state.config.aeOrigin !== origin || Boolean(current) !== Boolean(scope) || (current && scope && !sameScope(current, scope))) await merge(await bridge.request<Snapshot>('workspace.connect', { origin, ...(scope ? { scope } : {}) }));
+  state.aeConnection = result; broadcast(); return state;
 }
 async function pageAt(tabId: number): Promise<PageContext | undefined> {
   const scope = state.config.binding; if (!scope) return;
@@ -107,6 +130,16 @@ async function handle(message: any): Promise<any> {
     case 'auth.check': return connection.url ? connect() : state;
     case 'service.reconnect': return connect();
     case 'service.disconnect': bridge.close(); connection = { url: '', token: '' }; state = guest(); await chrome.storage.local.remove(['serviceConnection', 'serviceSnapshot']); broadcast(); return state;
+    case 'workspace.connect': {
+      const url = safeURL(message.origin); if (url.origin !== message.origin) throw new Error('AE 环境请填写根域名，不含路径');
+      await connect(); if (state.session.status === 'running') throw new Error('请先停止当前任务后更换 AE 环境');
+      return refreshAe(url.origin);
+    }
+    case 'workspace.refresh': if (!state.config.aeOrigin) throw new Error('请先保存 AE 环境地址'); await connect(); return state;
+    case 'workspace.openAE': {
+      const origin = safeURL(message.origin || state.config.aeOrigin || state.config.binding?.origin).origin;
+      const tab = await aeTab(origin); if (tab?.id) await chrome.tabs.update(tab.id, { active: true }); else await chrome.tabs.create({ url: origin }); return { opened: true };
+    }
     case 'chat.send': await connect(); if (state.auth?.status !== 'authenticated') throw new AuthenticationError('请先登录服务网页，再继续对话'); await currentPage(); { const result = await bridge.request('chat.send', { text: message.text, page: state.page }); await merge(await bridge.request('state.get')); bridge.watch(); return result; }
     case 'config.save': {
       if (message.config?.binding) { const origin = safeURL(message.config.binding.origin).origin; if (!(await chrome.permissions.contains({ origins: [`${origin}/*`] }))) throw new Error('请允许扩展访问 AE 环境'); }

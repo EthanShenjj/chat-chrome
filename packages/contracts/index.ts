@@ -18,6 +18,7 @@ export const McpSchema = z.object({
 export type McpConfig = z.infer<typeof McpSchema>;
 export const HostConfigSchema = z.object({
   cliPath: z.string().min(1).default('ae-cli'), binding: ScopeSchema.nullable().default(null),
+  aeOrigin: z.url().optional(), aeAuthScope: ScopeSchema.optional(),
   providers: z.array(ProviderSchema).default([]), mcps: z.array(McpSchema).default([])
 });
 export type HostConfig = z.infer<typeof HostConfigSchema>;
@@ -40,7 +41,9 @@ export interface Message { id: string; role: 'user' | 'assistant'; text: string;
 export interface Approval { id: string; taskId: string; label: string; details: unknown; }
 export interface Session { id: string; title: string; messages: Message[]; history: unknown[]; status: 'idle' | 'running' | 'interrupted' | 'failed'; error?: string; scope?: Scope; updatedAt: number; }
 export interface LoginState { status: 'checking' | 'authenticated' | 'unauthenticated'; userId?: string; }
-export interface Snapshot { config: HostConfig; connected: boolean; session: Session; operations: Operation[]; deliveries: Delivery[]; approvals: Approval[]; page?: PageContext; providerId: string; serviceURL?: string; auth?: LoginState; }
+export interface AeConnection { status: 'ready' | 'login-required' | 'project-required' | 'page-required' | 'unavailable'; message: string; scope?: Scope; accountName?: string; projectName?: string; }
+export interface Snapshot { config: HostConfig; connected: boolean; session: Session; operations: Operation[]; deliveries: Delivery[]; approvals: Approval[]; page?: PageContext; providerId: string; serviceURL?: string; auth?: LoginState; aeConnection?: AeConnection; }
+export function sameAeIdentity(a: Scope, b?: Scope) { return Boolean(b && a.origin === b.origin && a.actorId === b.actorId && (a.tenantId ?? '') === (b.tenantId ?? '')); }
 export type WireReply = { id: string; type: 'result'; result: unknown } | { id: string; type: 'error'; error: string } | { id: string; type: 'headers'; status: number } | { id: string; type: 'chunk'; chunk: string } | { id: string; type: 'end' };
 export const MAX_FRAME = 768 * 1024;
 export function sameScope(a: Scope, b: Scope) { return a.origin === b.origin && a.projectId === b.projectId && a.actorId === b.actorId && (a.tenantId ?? '') === (b.tenantId ?? ''); }

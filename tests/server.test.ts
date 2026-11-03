@@ -41,6 +41,21 @@ it('requires authentication, restricts extension origins, and rejects arbitrary 
   expect((await call(alice, 'credential.get', { ref: 'key' })).body.ok).toBe(false);
   expect(options(new Request('http://localhost/api/rpc', { headers: { Origin: extensionOrigin } })).status).toBe(204);
 });
+it('saves an AE origin without requiring manual account or project IDs', async () => {
+  const saved = await call(bob, 'workspace.connect', { origin });
+  expect(saved.body.ok).toBe(true);
+  expect(saved.body.result.config.aeOrigin).toBe(origin);
+  expect(saved.body.result.config.binding).toBeNull();
+  expect((await call(bob, 'workspace.connect', { origin, scope: { origin: 'https://another.example', projectId: '2', actorId: '42' } })).body.ok).toBe(false);
+});
+it('does not reuse an AE CLI credential after the discovered account changes', async () => {
+  const scope = { origin, projectId: '2', actorId: 'ae-user-42' };
+  expect((await call(bob, 'workspace.connect', { origin, scope })).body.ok).toBe(true);
+  expect((await call(bob, 'auth.save', { token: 'fixture-ae-token' })).body.ok).toBe(true);
+  expect((await call(bob, 'workspace.connect', { origin, scope: { ...scope, actorId: 'ae-user-43' } })).body.ok).toBe(true);
+  const check = await call(bob, 'auth.status');
+  expect(check.body.ok).toBe(false); expect(check.body.error).toContain('账号或租户已变化');
+});
 it('isolates configuration and encrypted credentials between users', async () => {
   const initial = (await call(alice, 'state.get')).body.result;
   const config = { ...initial.config, providers: [{ ...defaultProvider, protocol: 'openai-chat-completions', id: 'test', baseURL: `${origin}/v1`, credentialRef: 'test', model: 'test' }] };

@@ -21,7 +21,12 @@ try {
   context = await chromium.launchPersistentContext(join(root, 'profile'), { executablePath, headless: true, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`], viewport: { width: 1100, height: 900 } });
   context.on('page', p => p.on('pageerror', e => errors.push(e.message)));
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker'); const extensionId = new URL(worker.url()).host;
-  model = createServer((req, res) => { let text = ''; req.on('data', c => text += c); req.on('end', () => {
+  let aeLoggedIn = true;
+  model = createServer((req, res) => {
+    if (req.url === '/fake-ae') { res.setHeader('Content-Type', 'text/html'); res.end(`<title>Fixture AE</title><script>localStorage.setItem('ACCESS_TOKEN', JSON.stringify('browser-ae-fixture-only'));localStorage.setItem('TA_LOCAL_STORAGE', JSON.stringify({login:{user:{userId:42},project:{projectId:2}}}));sessionStorage.setItem('TA_CURRENT_PROJECT', JSON.stringify({projectId:2}));location.hash='/tga/event/2_18';</script><h1>Fixture AE</h1>`); return; }
+    if (req.url === '/v1/oauth/check') { res.setHeader('Content-Type', 'application/json'); if (!aeLoggedIn || req.headers.authorization !== 'bearer browser-ae-fixture-only') { res.writeHead(401).end('{}'); return; } res.end(JSON.stringify({return_code:0,data:{userId:42,loginName:'ae-browser-user',projectInfoList:[{projectId:2,projectName:'Demo',companyId:7}]}})); return; }
+    if (req.method !== 'POST') { res.writeHead(404).end(); return; }
+    let text = ''; req.on('data', c => text += c); req.on('end', () => {
     const body = JSON.parse(text); modelCalls.push(body);
     if (req.headers.authorization !== 'Bearer cloud-test-provider-key') { res.writeHead(401).end('{"error":{"message":"bad key"}}'); return; }
     if (!body.stream) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ id: 'check', object: 'chat.completion', created: 1, model: 'cloud-test', choices: [{ index: 0, message: { role: 'assistant', content: body.tools ? null : 'OK', ...(body.tools ? { tool_calls: [{ id: 'test-call', type: 'function', function: { name: 'connection_check', arguments: '{"token":"ae-ok"}' } }] } : {}) }, finish_reason: body.tools ? 'tool_calls' : 'stop' }] })); return; }
@@ -88,7 +93,20 @@ try {
   await website.bringToFront(); await website.getByRole('textbox', { name: '账号', exact: true }).fill('e2e-user'); await website.getByLabel('密码', { exact: true }).fill(password); await website.getByRole('button', { name: '登录', exact: true }).click();
   await website.getByRole('textbox', { name: '消息' }).waitFor(); await page.bringToFront();
   await page.getByText('服务器已完成 CLI 检测，浏览器无需本地执行器。', { exact: true }).waitFor({ timeout: 20000 });
+  const aePage = await context.newPage(); await aePage.goto(`${modelOrigin}/fake-ae`); await aePage.getByRole('heading', { name: 'Fixture AE' }).waitFor();
+  await page.evaluate(async origin => { const [tab] = await chrome.tabs.query({ url: `${origin}/*` }); await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => { globalThis.__aeChatContent = true; } }); }, modelOrigin);
+  await page.bringToFront(); await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: 'AE 工作区', exact: true }).click();
+  if (await page.getByRole('textbox', { name: '项目 ID', exact: true }).count() || await page.getByRole('textbox', { name: 'AE 账号标识', exact: true }).count()) throw new Error('Manual AE identity fields still present');
+  await page.getByRole('textbox', { name: /^AE 环境/ }).fill(modelOrigin); await page.getByRole('button', { name: '保存环境地址', exact: true }).click();
+  await page.getByText('Demo · ae-browser-user', { exact: true }).waitFor({ timeout: 20000 });
+  const identified = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'state.get' }));
+  if (identified.result.config.binding.actorId !== '42' || identified.result.config.binding.projectId !== '2' || identified.result.config.binding.tenantId !== '7') throw new Error('AE context was not derived from live page authentication');
+  if (JSON.stringify(identified).includes('browser-ae-fixture-only')) throw new Error('Browser AE credential left the content script');
+  await page.setViewportSize({ width: 1100, height: 900 }); await page.screenshot({ path: 'artifacts/ae-workspace.png', fullPage: true });
+  aeLoggedIn = false;
+  const expired = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'workspace.refresh' }));
+  if (expired.result.config.binding !== null || expired.result.aeConnection.status !== 'login-required') throw new Error('Expired AE login was accepted from cached storage');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log(JSON.stringify({ passed: true, checks: ['Next.js production server', 'extension download', 'HTTPS-compatible authenticated RPC', 'website password login and automatic extension authorization', 'anonymous chat rejection', 'website logout revokes extension access', 'private history cleared on logout', 'login resumes the same server conversation', 'model settings and encrypted key', 'capability test', 'server-side streamed tool loop', 'persisted conversation after page reload', 'no native messaging permission'], screenshots: ['artifacts/cloud-home.png', 'artifacts/cloud-sidepanel.png'] }, null, 2));
+  console.log(JSON.stringify({ passed: true, checks: ['Next.js production server', 'extension download', 'HTTPS-compatible authenticated RPC', 'website password login and automatic extension authorization', 'anonymous chat rejection', 'website logout revokes extension access', 'private history cleared on logout', 'login resumes the same server conversation', 'model settings and encrypted key', 'capability test', 'server-side streamed tool loop', 'persisted conversation after page reload', 'no native messaging permission', 'AE environment-only form', 'live AE login and automatic project/account detection', 'expired AE login clears binding', 'browser AE credential stays inside the page'], screenshots: ['artifacts/cloud-home.png', 'artifacts/cloud-sidepanel.png'] }, null, 2));
 } catch (e) { console.error(logs.join('').slice(-5000)); throw e; }
 finally { if (context) await context.close(); if (next && next.exitCode === null) { const stopped = new Promise(r => next.once('exit', r)); next.kill('SIGTERM'); await stopped; } if (model) await new Promise(r => model.close(r)); await rm(root, { recursive: true, force: true }); }

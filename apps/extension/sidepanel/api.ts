@@ -18,6 +18,8 @@ export async function request<T = any>(type: string, args: Record<string, unknow
   }
   if (!isWebApp) { if (['state.get', 'auth.check'].includes(type)) return preview as T; throw new Error('当前为静态预览，请加载 Chrome 扩展或打开 Next.js /workspace'); }
   if (type === 'auth.openLogin') { window.open('/login?next=/workspace', '_blank', 'noopener'); return { opened: true } as T; }
+  if (type === 'workspace.openAE') { const origin = new URL(String(args.origin)).origin; window.open(origin, '_blank', 'noopener'); return { opened: true } as T; }
+  if (type === 'workspace.refresh') throw new Error('请在 Chrome 扩展中识别已登录的 AE 页面');
   if (type === 'auth.logout') { const response = await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' }); if (!response.ok) throw new Error('退出登录失败，请重试'); web.close(); location.replace('/login'); return { loggedOut: true } as T; }
   if (['service.connect', 'service.reconnect', 'auth.check', 'state.get'].includes(type)) {
     try { const state = await web.request<Snapshot>('state.get'); web.watch(); return { ...state, serviceURL: location.origin } as T; }

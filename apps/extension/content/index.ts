@@ -1,20 +1,22 @@
 import { detectPage } from '../../../packages/page-adapters/index';
 import { matchesPage } from '../../../packages/sync-engine/index';
 import type { Scope, ResourceChanged } from '../../../packages/contracts/index';
+import { discoverAeContext } from '../../../packages/page-adapters/discovery';
 // No page-to-extension command channel. This script can only answer context/sync requests.
-if (!(globalThis as any).__aeChatContent) {
-  (globalThis as any).__aeChatContent = true;
+if ((globalThis as any).__aeChatContent !== '0.2.2') {
+  (globalThis as any).__aeChatContent = '0.2.2';
   let edited = false;
   document.addEventListener('input', e => { const target = e.target as HTMLElement; if (target.closest('input,textarea,[contenteditable="true"]')) edited = true; }, true);
   document.addEventListener('change', () => { edited = true; }, true);
   function context(scope: Scope) {
     let observedProject: string | undefined;
     // Existing AE storage contract, read only the selected project's ID; never tokens or credentials.
-    try { const session = JSON.parse(sessionStorage.getItem('TA_CURRENT_PROJECT') || 'null'); const selected = session?.projectId ?? JSON.parse(localStorage.getItem('TA_LOCAL_STORAGE') || 'null')?.login?.project?.projectId; if (selected != null) observedProject = String(selected); } catch {}
+    try { const local = JSON.parse(localStorage.getItem('TA_LOCAL_STORAGE') || 'null'); if (String(local?.login?.user?.userId) !== scope.actorId) return; const session = JSON.parse(sessionStorage.getItem('TA_CURRENT_PROJECT') || 'null'); const selected = session?.projectId ?? local?.login?.project?.projectId; if (selected != null) observedProject = String(selected); } catch { return; }
     const page = detectPage(location.href, scope, document.title, observedProject); if (page) page.dirty = edited ? true : 'unknown'; return page;
   }
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (sender.id !== chrome.runtime.id) return;
+    if (message.type === 'workspace.discover') { void discoverAeContext({ origin: message.origin, url: location.href, local: localStorage, session: sessionStorage, fetch: globalThis.fetch.bind(globalThis) }).then(reply, () => reply({ status: 'unavailable', message: '无法识别 AE 工作区' })); return true; }
     if (message.type === 'page.context') { reply(context(message.scope)); return; }
     if (message.type === 'page.sync') {
       const change = message.change as ResourceChanged, page = context(change.scope);

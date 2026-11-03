@@ -21,6 +21,8 @@ try {
   await page.getByRole('heading', { name: '选择你的思考伙伴' }).waitFor();
   await page.getByRole('button', { name: 'AE 工作区', exact: true }).click();
   await page.getByRole('heading', { name: '连接真实的工作区' }).waitFor();
+  if (await page.getByRole('textbox', { name: '项目 ID', exact: true }).count() || await page.getByRole('textbox', { name: 'AE 账号标识', exact: true }).count() || await page.getByRole('textbox', { name: '租户 ID（可选）', exact: true }).count()) throw new Error('AE environment still requires manual identity fields');
+  await page.getByRole('textbox', { name: /^AE 环境/ }).waitFor();
   await page.getByRole('button', { name: 'MCP 工具', exact: true }).click();
   await page.getByRole('heading', { name: '把熟悉的工具带进来' }).waitFor();
   await page.getByRole('combobox', { name: '连接方式' }).selectOption('stdio');

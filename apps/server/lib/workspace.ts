@@ -6,7 +6,7 @@ import { runAgent } from '../../../packages/agent-runtime/index';
 import { HostConfigSchema, ScopeSchema, defaultConfig, errorText, sameScope, type Snapshot, type Session, type PageContext, type ProviderConfig, type Operation } from '../../../packages/contracts/index';
 import { isWrite, type AeTool } from '../../../packages/ae-cli-adapter/index';
 import { HostService } from '../../../packages/execution-service/service';
-import { atomicWrite, credential, readConfig, readJSON } from '../../../packages/execution-service/storage';
+import { atomicWrite, credential, readConfig, readJSON, writeConfig } from '../../../packages/execution-service/storage';
 import { withExecutionContext, type ExecutionContext } from '../../../packages/execution-service/context';
 import { aeCredentialRef } from '../../../packages/execution-service/cli-runner/index';
 import { modelRequest } from '../../../packages/execution-service/model-transport/index';
@@ -56,6 +56,7 @@ export class CloudWorkspace {
       case 'chat.send': {
         this.ensureIdle(); const text = z.string().trim().min(1).max(32000).parse(message.text);
         const config = await readConfig(), provider = config.providers.find(p => p.id === this.data.providerId);
+        if (config.aeOrigin && !config.binding) throw new Error('请先在 AE 网页登录并选择项目，再通过扩展识别工作区');
         if (!provider) throw new Error('请先配置模型并测试连接');
         if (this.session.scope && (!config.binding || !sameScope(this.session.scope, config.binding))) throw new Error('此会话属于其他工作区，请新建对话');
         this.page = this.validatePage(message.page, config.binding);
@@ -77,6 +78,8 @@ export class CloudWorkspace {
         this.ensureIdle(); const current = await readConfig(), config = HostConfigSchema.parse(message.config);
         // Remote users cannot choose a server executable or bypass capability testing.
         config.cliPath = current.cliPath;
+        config.aeOrigin = current.aeOrigin ?? config.aeOrigin;
+        config.aeAuthScope = current.aeAuthScope;
         config.providers = config.providers.map(p => { const old = current.providers.find(o => o.id === p.id); return { ...p, capabilities: { ...p.capabilities, toolCalling: Boolean(old?.capabilities.toolCalling && old.baseURL === p.baseURL && old.model === p.model && old.protocol === p.protocol && old.credentialRef === p.credentialRef) } }; });
         await this.host.dispatch('config.set', config);
         if (current.binding && (!config.binding || !sameScope(current.binding, config.binding))) { const s = freshSession(); this.data.sessions.push(s); this.data.sessionId = s.id; this.page = undefined; }
@@ -84,7 +87,15 @@ export class CloudWorkspace {
         await this.persist(); return this.snapshot();
       }
       case 'credential.save': { this.ensureIdle(); const { ref, secret } = z.object({ ref: z.string().max(128), secret: z.string().min(1).max(16384) }).parse(message); await credential(ref, secret); return { saved: true }; }
-      case 'auth.save': { this.ensureIdle(); const config = await readConfig(); if (!config.binding) throw new Error('请先绑定 AE 环境'); const token = z.string().min(1).max(16384).parse(message.token); await credential(aeCredentialRef(config.binding.origin), token); return { saved: true, message: 'AE Token 已在服务器加密保存' }; }
+      case 'workspace.connect': {
+        this.ensureIdle(); const origin = z.url().parse(message.origin), scope = message.scope ? ScopeSchema.parse(message.scope) : null;
+        if (scope && scope.origin !== origin) throw new Error('识别到的 AE 页面与环境地址不一致');
+        const current = await readConfig();
+        await this.host.dispatch('config.set', { ...current, aeOrigin: origin, binding: scope });
+        if (current.binding && (!scope || !sameScope(current.binding, scope))) { const s = freshSession(); this.data.sessions.push(s); this.data.sessionId = s.id; this.page = undefined; }
+        await this.persist(); return this.snapshot();
+      }
+      case 'auth.save': { this.ensureIdle(); const config = await readConfig(); if (!config.binding) throw new Error('请先从已登录的 AE 页面识别工作区'); const token = z.string().min(1).max(16384).parse(message.token); await credential(aeCredentialRef(config.binding.origin), token); await writeConfig({ ...config, aeAuthScope: config.binding }); return { saved: true, message: 'AE Token 已在服务器加密保存' }; }
       case 'auth.status': return this.host.dispatch('auth.status');
       case 'cli.probe': return this.host.dispatch('cli.probe');
       case 'mcp.list': return this.host.dispatch('mcp.list', { serverId: message.serverId });

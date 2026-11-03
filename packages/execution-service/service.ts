@@ -20,6 +20,7 @@ export class HostService {
       case 'config.get': return readConfig();
       case 'config.set': {
         const config = HostConfigSchema.parse(params);
+        if (config.aeOrigin) { const u = safeURL(config.aeOrigin); if (u.origin !== config.aeOrigin) throw new Error('AE 环境必须是 origin，不含路径'); assertAllowedOrigin(config.aeOrigin); if (config.binding && config.binding.origin !== config.aeOrigin) throw new Error('AE 页面与保存的环境地址不一致'); }
         if (config.binding) { const u = safeURL(config.binding.origin); if (u.origin !== config.binding.origin) throw new Error('AE 环境必须是 origin，不含路径'); }
         if (config.binding) assertAllowedOrigin(config.binding.origin);
         for (const p of config.providers) { safeURL(p.baseURL); assertAllowedOrigin(p.baseURL); }

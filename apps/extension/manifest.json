@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AE Chat Agent",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "连接线上 Agent，通过服务器 CLI 管理 AE 报表，跟踪保存与页面同步。无需本地执行器。",
   "minimum_chrome_version": "120",
   "permissions": [
