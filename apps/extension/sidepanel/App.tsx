@@ -18,6 +18,13 @@ export default function App() {
   useEffect(() => { if (state?.session.status === 'running') end.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [state?.session.messages.at(-1)?.text]);
   useEffect(() => { if (notice) { const timer = setTimeout(() => setNotice(''), 5000); return () => clearTimeout(timer); } }, [notice]);
   useEffect(() => { const check = () => { void request<Snapshot>('auth.check').then(setState).catch(() => {}); }; window.addEventListener('focus', check); const timer = state?.serviceURL && state.auth?.status !== 'authenticated' ? setInterval(check, 5000) : undefined; return () => { window.removeEventListener('focus', check); if (timer) clearInterval(timer); }; }, [state?.serviceURL, state?.auth?.status]);
+  useEffect(() => {
+    if (state?.auth?.status !== 'authenticated' || state.aeCliAuth?.status !== 'pending') return;
+    let active = true, polling = false;
+    const check = async () => { if (polling) return; polling = true; try { await request('auth.login.check'); const next = await request<Snapshot>('state.get'); if (active) setState(next); } catch (e) { if (active) setError(errorText(e)); } finally { polling = false; } };
+    const timer = setInterval(() => void check(), Math.max(1000, state.aeCliAuth.pollIntervalMs ?? 5000));
+    return () => { active = false; clearInterval(timer); };
+  }, [state?.auth?.status, state?.auth?.userId, state?.aeCliAuth?.status, state?.aeCliAuth?.pollIntervalMs, state?.aeCliAuth?.origin]);
   const running = state?.session.status === 'running';
   const loggedIn = state?.auth?.status === 'authenticated';
   const provider = state?.config.providers.find(p => p.id === state.providerId);
@@ -36,6 +43,7 @@ export default function App() {
           <div className="session-label">{state.session.title}</div>
           {state.session.messages.map(m => <article className={`message ${m.role}`} key={m.id}>{m.role === 'assistant' && <div className="assistant-label"><span className="tiny-brand">✦</span> AE 助手</div>}<div className="message-text">{m.text || (running ? <span className="thinking">正在处理<span>…</span></span> : '本次没有生成回复')}</div>{m.role === 'assistant' && m.text && <button className="copy-button" aria-label="复制回答" onClick={() => void navigator.clipboard.writeText(m.text)}><Copy size={13}/></button>}</article>)}
         </>}
+        {loggedIn && state.config.binding && state.aeCliAuth?.status !== 'not-authorized' && <AeCliAuthorization state={state} act={act} busy={busy}/>}
         {state.operations.filter(o => o.taskId.startsWith(state.session.id + ':')).map(o => <OperationCard key={o.id} operation={o} deliveries={state.deliveries.filter(d => d.eventId === o.event?.eventId)} act={act}/>)}
         {state.approvals.map(a => <div className="approval" key={a.id}><ShieldCheck size={18}/><strong>{a.label}</strong><p>请检查本次操作的来源、目标与参数，确认后执行。</p><pre>{JSON.stringify(a.details, null, 2)}</pre><div className="button-row"><button onClick={() => void act(() => request('approval.resolve', { id: a.id, approved: false }))}>拒绝</button><button className="primary" onClick={() => void act(() => request('approval.resolve', { id: a.id, approved: true }))}>允许此次调用</button></div></div>)}
         {state.session.error && <div className="inline-error">{state.session.error}</div>}<div ref={end}/>
@@ -48,6 +56,12 @@ export default function App() {
 type Act = (fn: () => Promise<any>, success?: string) => Promise<any>;
 function PageHeading({ title, text }: { title: string; text: string }) { return <div className="page-heading"><h1>{title}</h1><p>{text}</p></div>; }
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) { return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>; }
+function AeCliAuthorization({ state, act, busy }: { state: Snapshot; act: Act; busy: boolean }) {
+  const auth = state.aeCliAuth;
+  if (!auth) return null;
+  const pending = auth.status === 'pending', ready = auth.status === 'authenticated';
+  return <section className="cli-auth-card" aria-label="AE CLI 授权状态"><strong><ShieldCheck size={16}/>{ready ? 'AE CLI 已授权' : pending ? '等待 AE CLI 授权' : 'AE CLI 授权'}</strong><p>{auth.message}</p>{auth.accountName && <p>授权账号：{auth.accountName}</p>}{pending && <><p>请使用当前 AE 账号确认。授权码：<b>{auth.userCode}</b></p><div className="button-row"><a className="authorization-link" href={auth.verificationURL} target="_blank" rel="noopener noreferrer">打开 AE 授权页面<ExternalLink size={13}/></a><button disabled={busy} onClick={() => void act(() => request('auth.login.check'))}>我已授权，立即检查</button><button disabled={busy} onClick={() => void act(() => request('auth.login.cancel'))}>取消本次授权</button></div></>}{!pending && <div className="button-row">{!ready && <button className="primary" disabled={busy || !state.config.binding} onClick={() => void act(() => request('auth.login.start'))}>浏览器授权 AE CLI</button>}<button disabled={busy || !state.config.binding} onClick={() => void act(() => request('auth.cli.status'))}>检查 AE CLI 授权</button></div>}</section>;
+}
 function OperationCard({ operation: o, deliveries, act }: { operation: Operation; deliveries: Delivery[]; act: Act }) {
   const [expanded, setExpanded] = useState(false); const [reloadId, setReloadId] = useState('');
   const title = ({ 'ae.report.get': '读取报表', 'ae.report.create': '创建报表', 'ae.report.update': '更新报表', 'ae.report.query': '查询报表', 'ae.asset.getUrl': '获取资源链接', 'ae.metadata.events': '搜索事件', 'ae.report.schema': '检查报表契约' } as Record<string, string>)[o.tool] || o.tool;
@@ -83,9 +97,10 @@ function WorkspaceSettings({ state, act, busy }: { state: Snapshot; act: Act; bu
       <div className="button-row"><button className="primary" disabled={busy || running}>保存环境地址</button>{isExtension && <button type="button" disabled={busy || running || !state.config.aeOrigin} onClick={() => void act(() => request('workspace.refresh'))}>重新识别</button>}<button type="button" disabled={busy || !origin} onClick={() => void act(() => request('workspace.openAE', { origin }))}>打开 AE 并登录</button></div>
     </form>
     <div className="host-box"><div className="host-icon"><ShieldCheck size={22}/></div><div><strong>{detection?.status === 'ready' ? '已识别 AE 工作区' : '等待识别 AE 工作区'}</strong><p>{detection?.message ?? (isExtension ? '保存环境地址后，从已登录的 AE 页面自动识别。' : '环境地址保存后，请在 Chrome 扩展中识别已登录的 AE 页面。')}</p>{detection?.status === 'ready' && <p>{detection.projectName} · {detection.accountName}</p>}</div></div>
+    <AeCliAuthorization state={state} act={act} busy={busy}/>
     <details><summary>服务器 CLI 与授权（执行工具时再配置）</summary><div className="info-note"><Terminal size={17}/><p>AE CLI 可以稍后在对话中安装。网页登录凭据只在 AE 页面内用于校验；服务器执行 CLI 时仍需要单独的 AE 工具授权。</p></div>
       <div className="button-row"><button type="button" disabled={busy} onClick={() => void act(async () => { setResult(JSON.stringify(await request('cli.probe'), null, 2)); })}>检测服务器 CLI</button></div>
-      <form className="settings-form" onSubmit={e => { e.preventDefault(); void act(async () => { await request('auth.save', { token: aeToken }); setAeToken(''); }, 'AE 工具授权已加密保存'); }}><Field label="AE CLI Token" hint="请使用当前识别到的 AE 账号签发的 CLI Token。切换账号或租户后需要重新授权。"><input type="password" autoComplete="off" value={aeToken} onChange={e => setAeToken(e.target.value)} required/></Field><div className="button-row"><button className="primary" disabled={busy || !state.config.binding}>保存工具授权</button><button type="button" disabled={busy} onClick={() => void act(async () => { setResult(JSON.stringify(await request('auth.status'), null, 2)); })}>检查工具授权</button></div></form>
+      <details><summary>手动配置已有 CLI Token（高级）</summary><form className="settings-form" onSubmit={e => { e.preventDefault(); void act(async () => { await request('auth.save', { token: aeToken }); setAeToken(''); }, 'AE 工具授权已加密保存'); }}><Field label="AE CLI Token" hint="通常直接使用上方的浏览器授权即可。切换账号或租户后需要重新授权。"><input type="password" autoComplete="off" value={aeToken} onChange={e => setAeToken(e.target.value)} required/></Field><div className="button-row"><button className="primary" disabled={busy || !state.config.binding}>保存工具授权</button><button type="button" disabled={busy} onClick={() => void act(() => request('auth.cli.status'))}>检查工具授权</button></div></form></details>
       {result && <pre className="test-result">{result}</pre>}
     </details>
   </>;

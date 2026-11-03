@@ -8,10 +8,12 @@ import { assertAllowedOrigin, executionContext } from './context';
 import { runCli, runProcess } from './cli-runner/index';
 import { CliInstaller } from './installer/index';
 import { McpManager } from './mcp-client/index';
+import { CliAuthorization } from './cli-auth';
 export class HostService {
   private get journalPath() { return join(getDataDir(), 'operations.json'); }
   mcp = new McpManager();
   installer = new CliInstaller();
+  authorization = new CliAuthorization();
   private queue: Promise<unknown> = Promise.resolve();
   private approvals = new Map<string, string>();
   async dispatch(method: string, params: any = {}): Promise<unknown> {
@@ -38,6 +40,10 @@ export class HostService {
       case 'cli.install.plan': return this.installer.plan(params.version);
       case 'cli.install.approve': return this.installer.approve(params.planId);
       case 'cli.install': return this.serial(() => this.installer.install(params.planId));
+      case 'auth.login.start': return this.authorization.start();
+      case 'auth.login.check': return this.authorization.check();
+      case 'auth.login.cancel': return this.authorization.cancel();
+      case 'auth.cli.status': return this.authorization.status();
       case 'auth.status': { const c = await readConfig(); if (!c.binding) throw new Error('请先绑定 AE 环境与项目'); return runCli(c.cliPath, ['--host', c.binding.origin, '--format', 'json', '--no-update-check', 'auth', 'status']); }
       case 'auth.login': { if (executionContext()) throw new Error('线上服务请使用 AE Token 授权'); const c = await readConfig(); if (!c.binding) throw new Error('请先绑定 AE 环境'); const r = await runProcess(c.cliPath, ['--host', c.binding.origin, 'auth', 'login'], 300000); return { code: r.code, output: r.stdout, error: r.stderr }; }
       case 'ae.execute': return this.serial(() => this.executeAe(params));

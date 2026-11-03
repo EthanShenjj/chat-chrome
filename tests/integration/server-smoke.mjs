@@ -21,18 +21,25 @@ try {
   context = await chromium.launchPersistentContext(join(root, 'profile'), { executablePath, headless: true, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`], viewport: { width: 1100, height: 900 } });
   context.on('page', p => p.on('pageerror', e => errors.push(e.message)));
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker'); const extensionId = new URL(worker.url()).host;
-  let aeLoggedIn = true;
+  let aeLoggedIn = true, deviceApproved = false;
   model = createServer((req, res) => {
     if (req.url === '/fake-ae') { res.setHeader('Content-Type', 'text/html'); res.end(`<title>Fixture AE</title><script>localStorage.setItem('ACCESS_TOKEN', JSON.stringify('browser-ae-fixture-only'));localStorage.setItem('TA_LOCAL_STORAGE', JSON.stringify({login:{user:{userId:42},project:{projectId:2}}}));sessionStorage.setItem('TA_CURRENT_PROJECT', JSON.stringify({projectId:2}));location.hash='/tga/event/2_18';</script><h1>Fixture AE</h1>`); return; }
-    if (req.url === '/v1/oauth/check') { res.setHeader('Content-Type', 'application/json'); if (!aeLoggedIn || req.headers.authorization !== 'bearer browser-ae-fixture-only') { res.writeHead(401).end('{}'); return; } res.end(JSON.stringify({return_code:0,data:{userId:42,loginName:'ae-browser-user',projectInfoList:[{projectId:2,projectName:'Demo',companyId:7}]}})); return; }
+    if (req.url === '/v1/oauth/check') { res.setHeader('Content-Type', 'application/json'); if (!aeLoggedIn || !['bearer browser-ae-fixture-only', 'bearer fixture-device-access'].includes(req.headers.authorization)) { res.writeHead(401).end('{}'); return; } res.end(JSON.stringify({return_code:0,data:{userId:42,loginName:'ae-browser-user',projectInfoList:[{projectId:2,projectName:'Demo',companyId:7}]}})); return; }
+    if (req.url === '/agent/api/auth/device/authorize') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({device_code:'fixture-private-device',user_code:'TEST-1234',interval:1,expires_in:300})); return; }
+    if (req.url === '/agent/api/auth/device/token') { res.setHeader('Content-Type', 'application/json'); if (!deviceApproved) { res.writeHead(400).end('{"error":"authorization_pending"}'); return; } res.end('{"access_token":"fixture-device-access"}'); return; }
+    if (req.url === '/v1/ta/cli/token/generate') { res.setHeader('Content-Type', 'application/json'); res.end('{"return_code":0,"data":{"userSecret":"cli_fixture-private-grant"}}'); return; }
+    if (req.url === '/v1/ta/cli/token/validate') { res.setHeader('Content-Type', 'application/json'); if (req.headers['cli-token'] !== 'cli_fixture-private-grant') { res.writeHead(401).end('{}'); return; } res.end('{"return_code":0,"data":{"openId":"external-42","loginName":"ae-browser-user","userName":"Fixture User"}}'); return; }
+    if (req.url.startsWith('/agent/device-activate?')) { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end('<h1>授权 AE CLI</h1><button onclick="fetch(\'/fixture/approve-device\',{method:\'POST\'}).then(()=>document.querySelector(\'h1\').textContent=\'浏览器已确认授权\')">确认授权</button>'); return; }
+    if (req.url === '/fixture/approve-device') { deviceApproved = true; res.end('OK'); return; }
     if (req.method !== 'POST') { res.writeHead(404).end(); return; }
     let text = ''; req.on('data', c => text += c); req.on('end', () => {
     const body = JSON.parse(text); modelCalls.push(body);
     if (req.headers.authorization !== 'Bearer cloud-test-provider-key') { res.writeHead(401).end('{"error":{"message":"bad key"}}'); return; }
     if (!body.stream) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ id: 'check', object: 'chat.completion', created: 1, model: 'cloud-test', choices: [{ index: 0, message: { role: 'assistant', content: body.tools ? null : 'OK', ...(body.tools ? { tool_calls: [{ id: 'test-call', type: 'function', function: { name: 'connection_check', arguments: '{"token":"ae-ok"}' } }] } : {}) }, finish_reason: body.tools ? 'tool_calls' : 'stop' }] })); return; }
     const afterTool = body.messages.some(m => m.role === 'tool');
+    const wantsAuth = body.messages.some(m => m.role === 'user' && String(m.content).includes('帮我登录 AE CLI'));
     const chunk = (delta, finish = null) => ({ id: 'chat-next-test', object: 'chat.completion.chunk', created: 1, model: 'cloud-test', choices: [{ index: 0, delta, finish_reason: finish }] });
-    const chunks = afterTool ? [chunk({ role: 'assistant', content: '服务器已完成 CLI 检测，' }), chunk({ content: '浏览器无需本地执行器。' }), chunk({}, 'stop')] : [chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'cli-status-call', type: 'function', function: { name: 'ae_cli_status', arguments: '{}' } }] }), chunk({}, 'tool_calls')];
+    const chunks = afterTool ? [chunk({ role: 'assistant', content: wantsAuth ? '已发起 AE CLI 浏览器授权，请在网页确认。' : '服务器已完成 CLI 检测，浏览器无需本地执行器。' }), chunk({}, 'stop')] : [chunk({ role: 'assistant', tool_calls: [{ index: 0, id: 'cli-status-call', type: 'function', function: { name: wantsAuth ? 'ae_cli_auth_login' : 'ae_cli_status', arguments: '{}' } }] }), chunk({}, 'tool_calls')];
     res.setHeader('Content-Type', 'text/event-stream'); res.end(chunks.map(x => `data: ${JSON.stringify(x)}\n\n`).join('') + 'data: [DONE]\n\n');
   }); });
   await new Promise((r, reject) => { model.once('error', reject); model.listen(0, '127.0.0.1', r); });
@@ -102,10 +109,24 @@ try {
   if (identified.result.config.binding.actorId !== '42' || identified.result.config.binding.projectId !== '2' || identified.result.config.binding.tenantId !== '7') throw new Error('AE context was not derived from live page authentication');
   if (JSON.stringify(identified).includes('browser-ae-fixture-only')) throw new Error('Browser AE credential left the content script');
   await page.setViewportSize({ width: 1100, height: 900 }); await page.screenshot({ path: 'artifacts/ae-workspace.png', fullPage: true });
+  await page.getByRole('button', { name: '新对话', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: '返回对话', exact: true }).click();
+  await page.getByRole('textbox', { name: '消息' }).fill('帮我登录 AE CLI'); await page.getByRole('button', { name: '发送消息' }).click();
+  await page.getByRole('link', { name: '打开 AE 授权页面' }).waitFor({ timeout: 20000 });
+  await page.screenshot({ path: 'artifacts/ae-cli-authorization.png', fullPage: true });
+  const [approvalPage] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name: '打开 AE 授权页面' }).click()]);
+  try { await approvalPage.getByRole('heading', { name: '授权 AE CLI', exact: true }).waitFor({ timeout: 5000 }); } catch (error) { console.log('Authorization popup:', approvalPage.url(), await approvalPage.locator('body').innerText()); throw error; }
+  await approvalPage.getByRole('button', { name: '确认授权', exact: true }).click();
+  await approvalPage.getByRole('heading', { name: '浏览器已确认授权', exact: true }).waitFor();
+  await page.bringToFront(); await page.getByText('AE CLI 已授权', { exact: true }).waitFor({ timeout: 20000 });
+  const authorized = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'state.get' }));
+  if (authorized.result.aeCliAuth.status !== 'authenticated' || authorized.result.config.aeAuthScope.actorId !== '42') throw new Error('CLI device authorization was not verified against AE identity');
+  if (/fixture-private-device|fixture-device-access|cli_fixture-private-grant/.test(JSON.stringify(authorized))) throw new Error('Private device or CLI credentials reached the extension snapshot');
+  await page.screenshot({ path: 'artifacts/ae-cli-authorized.png', fullPage: true });
   aeLoggedIn = false;
   const expired = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'workspace.refresh' }));
   if (expired.result.config.binding !== null || expired.result.aeConnection.status !== 'login-required') throw new Error('Expired AE login was accepted from cached storage');
   if (errors.length) throw new Error(errors.join('\n'));
-  console.log(JSON.stringify({ passed: true, checks: ['Next.js production server', 'extension download', 'HTTPS-compatible authenticated RPC', 'website password login and automatic extension authorization', 'anonymous chat rejection', 'website logout revokes extension access', 'private history cleared on logout', 'login resumes the same server conversation', 'model settings and encrypted key', 'capability test', 'server-side streamed tool loop', 'persisted conversation after page reload', 'no native messaging permission', 'AE environment-only form', 'live AE login and automatic project/account detection', 'expired AE login clears binding', 'browser AE credential stays inside the page'], screenshots: ['artifacts/cloud-home.png', 'artifacts/cloud-sidepanel.png'] }, null, 2));
+  console.log(JSON.stringify({ passed: true, checks: ['Next.js production server', 'extension download', 'HTTPS-compatible authenticated RPC', 'website password login and automatic extension authorization', 'anonymous chat rejection', 'website logout revokes extension access', 'private history cleared on logout', 'login resumes the same server conversation', 'model settings and encrypted key', 'capability test', 'server-side streamed tool loop', 'persisted conversation after page reload', 'no native messaging permission', 'AE environment-only form', 'live AE login and automatic project/account detection', 'expired AE login clears binding', 'browser AE credential stays inside the page', 'chat starts CLI device authorization', 'browser confirmation and automatic grant completion', 'CLI device/access/token credentials never enter extension snapshots'], screenshots: ['artifacts/cloud-home.png', 'artifacts/cloud-sidepanel.png', 'artifacts/ae-cli-authorization.png', 'artifacts/ae-cli-authorized.png'] }, null, 2));
 } catch (e) { console.error(logs.join('').slice(-5000)); throw e; }
 finally { if (context) await context.close(); if (next && next.exitCode === null) { const stopped = new Promise(r => next.once('exit', r)); next.kill('SIGTERM'); await stopped; } if (model) await new Promise(r => model.close(r)); await rm(root, { recursive: true, force: true }); }

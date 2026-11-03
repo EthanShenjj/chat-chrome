@@ -152,7 +152,7 @@ async function handle(message: any): Promise<any> {
       d.status = 'unverified'; d.detail = '已确认并刷新页面；当前适配器无法验证图表定义版本'; await saveDelivery(d); await chrome.tabs.reload(d.tabId); return state;
     }
     default: {
-      const allowed = ['chat.stop', 'chat.new', 'sessions.list', 'sessions.load', 'provider.select', 'provider.test', 'credential.save', 'auth.save', 'auth.status', 'cli.probe', 'mcp.list', 'mcp.disconnect', 'approval.resolve', 'operations.reconcile'];
+      const allowed = ['chat.stop', 'chat.new', 'sessions.list', 'sessions.load', 'provider.select', 'provider.test', 'credential.save', 'auth.save', 'auth.status', 'auth.login.start', 'auth.login.check', 'auth.login.cancel', 'auth.cli.status', 'cli.probe', 'mcp.list', 'mcp.disconnect', 'approval.resolve', 'operations.reconcile'];
       if (!allowed.includes(message.type)) throw new Error('未知或未授权的消息');
       const { type, ...params } = message; const result = await bridge.request(type, params);
       if (result?.session) { await merge(result); return state; }

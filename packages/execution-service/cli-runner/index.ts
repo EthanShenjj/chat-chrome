@@ -16,6 +16,7 @@ export async function runProcess(executable: string, args: string[], timeout = 9
     await mkdir(join(context.dataDir, 'tmp'), { recursive: true, mode: 0o700 });
     temporaryHome = await mkdtemp(join(context.dataDir, 'tmp', 'process-'));
     env.HOME = temporaryHome; env.XDG_CONFIG_HOME = join(temporaryHome, '.config');
+    env.TE_AGENT_CLI_CONFIG_DIR = join(temporaryHome, '.ae-config');
     const hostIndex = args.indexOf('--host');
     if (hostIndex >= 0) {
       try { const token = await credential(aeCredentialRef(args[hostIndex + 1])); const config = await readConfig(); if (config.aeOrigin && (!config.binding || !sameAeIdentity(config.binding, config.aeAuthScope))) throw new Error('AE 账号或租户已变化，请为当前识别到的账号重新配置 CLI 授权'); await atomicWrite(join(temporaryHome, '.ae-config/cli-token.json'), { url: args[hostIndex + 1], token }); }

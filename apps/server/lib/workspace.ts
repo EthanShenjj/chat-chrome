@@ -44,7 +44,7 @@ export class CloudWorkspace {
   }
   async snapshot(): Promise<Snapshot> {
     await this.ready;
-    return this.run(async () => ({ config: await readConfig(), connected: true, session: structuredClone(this.session), operations: (await this.host.operations()).map(o => o.state === 'running' && !this.active ? { ...o, state: 'unknown' as const } : o), deliveries: [], approvals: structuredClone(this.approvals), providerId: this.data.providerId, page: this.page }));
+    return this.run(async () => ({ config: await readConfig(), connected: true, session: structuredClone(this.session), operations: (await this.host.operations()).map(o => o.state === 'running' && !this.active ? { ...o, state: 'unknown' as const } : o), deliveries: [], approvals: structuredClone(this.approvals), providerId: this.data.providerId, page: this.page, aeCliAuth: await this.host.authorization.view() }));
   }
   dispatch(message: any): Promise<any> {
     // Serialize control commands; model execution runs separately and is controlled by active.
@@ -98,6 +98,10 @@ export class CloudWorkspace {
       }
       case 'auth.save': { this.ensureIdle(); const config = await readConfig(); if (!config.binding) throw new Error('请先从已登录的 AE 页面识别工作区'); const token = z.string().min(1).max(16384).parse(message.token); await credential(aeCredentialRef(config.binding.origin), token); await writeConfig({ ...config, aeAuthScope: config.binding }); return { saved: true, message: 'AE Token 已在服务器加密保存' }; }
       case 'auth.status': return this.host.dispatch('auth.status');
+      case 'auth.login.start': return this.host.dispatch('auth.login.start');
+      case 'auth.login.check': return this.host.dispatch('auth.login.check');
+      case 'auth.login.cancel': return this.host.dispatch('auth.login.cancel');
+      case 'auth.cli.status': return this.host.dispatch('auth.cli.status');
       case 'cli.probe': return this.host.dispatch('cli.probe');
       case 'mcp.list': return this.host.dispatch('mcp.list', { serverId: message.serverId });
       case 'mcp.disconnect': return this.host.dispatch('mcp.disconnect', { serverId: message.serverId });
@@ -135,16 +139,21 @@ export class CloudWorkspace {
       }
       if (signal.aborted) throw new Error('任务已停止');
       const probeCli = async () => { try { return { installed: true, ...await this.host.dispatch('cli.probe') as object }; } catch (error) { return { installed: false, message: errorText(error) }; } };
-      let setupContext: unknown;
+      const authTools = provider.capabilities.toolCalling ? ['ae_cli_auth_login', 'ae_cli_auth_check', 'ae_cli_auth_status'] : [];
+      let setupContext: unknown = { aeCliAuth: await this.host.authorization.view(), aeOrigin: scope?.origin, authTools, executionTarget: 'server-user-workspace' };
       if (text.includes(installationGuideURL)) {
         // Fulfil the explicitly requested read before generation, even when old
         // conversation turns incorrectly claimed the guide could not be read.
         let guide: unknown;
         try { guide = await readInstallationGuide(signal); } catch (error) { guide = { source: installationGuideURL, error: errorText(error) }; }
-        setupContext = { guide, cliStatus: await probeCli(), aeOrigin: scope?.origin, hostPolicy: '所有 AE 业务工具均显式使用当前绑定 origin，不依赖全局 AE_HOST 配置。CLI 安装不代表 AE 已认证或 Skills 已安装。', executionTarget: 'server-user-workspace', tools: provider.capabilities.toolCalling ? ['ae_cli_installation_guide', 'ae_cli_status', 'ae_cli_install'] : [], toolStatus };
+        setupContext = { ...setupContext as object, guide, cliStatus: await probeCli(), hostPolicy: '所有 AE 业务工具均显式使用当前绑定 origin，不依赖全局 AE_HOST 配置。CLI 安装不代表 AE 已认证或 Skills 已安装。', tools: provider.capabilities.toolCalling ? ['ae_cli_installation_guide', 'ae_cli_status', 'ae_cli_install', ...authTools] : [], toolStatus };
       }
       const mcpTools = [];
       if (provider.capabilities.toolCalling) {
+        const empty = { type: 'object', properties: {}, additionalProperties: false };
+        mcpTools.push({ name: 'ae_cli_auth_login', description: '为当前绑定 AE 账号发起云端 CLI 设备码授权。返回浏览器确认链接；用户在 AE 网页确认后自动检查，无需本机终端、密码或 Token。不要要求用户粘贴令牌。', schema: empty, execute: async () => this.host.dispatch('auth.login.start') });
+        mcpTools.push({ name: 'ae_cli_auth_check', description: '检查当前待完成的浏览器授权，用户已确认时完成云端授权并验证账号。pending 时等待用户，不要循环调用。', schema: empty, execute: async () => this.host.dispatch('auth.login.check') });
+        mcpTools.push({ name: 'ae_cli_auth_status', description: '向当前 AE 环境验证服务器 CLI 授权状态。只返回脱敏状态与账号；不返回任何 Token。', schema: empty, execute: async () => this.host.dispatch('auth.cli.status') });
         mcpTools.push({ name: 'ae_cli_installation_guide', description: '读取官方 AE CLI 安装指南。用户提供 ThinkingAIAgenticEngine/ae-cli 的 cli-installation-guide.md 链接并要求安装时，先调用此工具；无需用户粘贴文档。只读取固定官方地址。', schema: { type: 'object', properties: {}, additionalProperties: false }, execute: async () => readInstallationGuide(signal) });
         mcpTools.push({ name: 'ae_cli_status', description: '检测服务器上的 AE CLI，不读取用户电脑。', schema: { type: 'object', properties: {}, additionalProperties: false }, execute: probeCli });
         mcpTools.push({ name: 'ae_cli_install', description: '在服务器的当前用户工作区安装 AE CLI；展示来源版本并请求用户确认。version 可省略。', schema: { type: 'object', properties: { version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?$' } }, additionalProperties: false }, execute: async (args: Record<string, unknown>) => {
