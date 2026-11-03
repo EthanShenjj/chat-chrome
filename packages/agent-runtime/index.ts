@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import { z } from 'zod';
 import { toolSchemas, type AeTool } from '../ae-cli-adapter/index';
 import type { ProviderConfig, Scope, PageContext } from '../contracts/index';
+import { usesVendorReasoning } from '../contracts/provider-presets';
 interface RuntimeOptions {
   provider: ProviderConfig; scope?: Scope; page?: PageContext; history: unknown[]; text: string; signal: AbortSignal;
   fetch: typeof fetch; execute: (name: AeTool, args: Record<string, unknown>) => Promise<unknown>;
@@ -13,8 +14,8 @@ export function createModel(provider: ProviderConfig, transport: typeof fetch) {
   const client = new OpenAI({ apiKey: 'native-host-managed', baseURL: provider.baseURL, dangerouslyAllowBrowser: true, fetch: transport, maxRetries: 0 });
   return new OpenAIProvider({ openAIClient: client as any, useResponses: provider.protocol === 'openai-responses' });
 }
-export function portableHistory(history: unknown[]): AgentInputItem[] {
-  return history.filter((item: any) => !item.type || ['message', 'function_call', 'function_call_result'].includes(item.type)).map((item: any) => {
+export function portableHistory(history: unknown[], reasoningProvider?: string): AgentInputItem[] {
+  return history.filter((item: any) => !item.type || ['message', 'function_call', 'function_call_result'].includes(item.type) || (item.type === 'reasoning' && reasoningProvider && item.providerData?.aeReasoningProvider === reasoningProvider)).map((item: any) => {
     const clean = { ...item }; delete clean.id; delete clean.providerData;
     if (Array.isArray(clean.content)) clean.content = clean.content.map((part: any) => { const copy = { ...part }; delete copy.providerData; return copy; });
     return clean;
@@ -38,10 +39,12 @@ export async function runAgent(o: RuntimeOptions): Promise<{ history: AgentInput
     modelSettings: { parallelToolCalls: false }
   });
   const runner = new Runner({ modelProvider: createModel(o.provider, o.fetch), tracingDisabled: true });
-  const input = [...portableHistory(o.history), { role: 'user' as const, content: o.text }];
+  const reasoningProvider = usesVendorReasoning(o.provider) ? `${o.provider.id}:${new URL(o.provider.baseURL).origin}` : undefined;
+  const historyWithProvider = (history: AgentInputItem[]) => history.map(item => item.type === 'reasoning' && reasoningProvider ? { ...item, providerData: { aeReasoningProvider: reasoningProvider } } : item);
+  const input = [...portableHistory(o.history, reasoningProvider), { role: 'user' as const, content: o.text }];
   if (!o.provider.capabilities.streaming) {
     const result = await runner.run(agent, input, { signal: o.signal, maxTurns: 12 });
-    const output = String(result.finalOutput ?? ''); await o.onText(output); return { history: result.history, output };
+    const output = String(result.finalOutput ?? ''); await o.onText(output); return { history: historyWithProvider(result.history), output };
   }
   const result = await runner.run(agent, input, { signal: o.signal, stream: true, maxTurns: 12 });
   let output = '';
@@ -49,5 +52,5 @@ export async function runAgent(o: RuntimeOptions): Promise<{ history: AgentInput
     if (event.type === 'raw_model_stream_event' && event.data.type === 'output_text_delta') { output += event.data.delta; await o.onText(output); }
   }
   await result.completed;
-  return { history: result.history, output: String(result.finalOutput ?? output) };
+  return { history: historyWithProvider(result.history), output: String(result.finalOutput ?? output) };
 }

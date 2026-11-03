@@ -1,4 +1,4 @@
-import { defaultConfig, type Snapshot } from '../../../packages/contracts/index';
+import { defaultConfig, errorText, type Snapshot } from '../../../packages/contracts/index';
 import { AuthenticationError, CloudBridge } from '../background/cloud';
 export const isExtension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.id);
 export const isWebApp = typeof window !== 'undefined' && location.pathname === '/workspace';
@@ -7,7 +7,15 @@ const web = new CloudBridge({ url: isWebApp ? location.origin : '', token: '', a
 // Remove credentials left behind by the previous manual-token UI.
 if (isWebApp) sessionStorage.removeItem('ae-service-token');
 export async function request<T = any>(type: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (isExtension) { const reply = await chrome.runtime.sendMessage({ type, ...args }); if (!reply?.ok) throw new Error(reply?.error || '扩展后台未响应'); return reply.result; }
+  if (isExtension) {
+    let reply;
+    try { reply = await chrome.runtime.sendMessage({ type, ...args }); }
+    catch (e) {
+      if (/Receiving end does not exist|Extension context invalidated|message port closed/i.test(errorText(e))) throw new Error('扩展后台连接已失效。请重新加载扩展，并关闭后重新打开侧栏或设置页。此请求未自动重试。');
+      throw e;
+    }
+    if (!reply?.ok) throw new Error(reply?.error || '扩展后台未响应'); return reply.result;
+  }
   if (!isWebApp) { if (['state.get', 'auth.check'].includes(type)) return preview as T; throw new Error('当前为静态预览，请加载 Chrome 扩展或打开 Next.js /workspace'); }
   if (type === 'auth.openLogin') { window.open('/login?next=/workspace', '_blank', 'noopener'); return { opened: true } as T; }
   if (type === 'auth.logout') { const response = await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' }); if (!response.ok) throw new Error('退出登录失败，请重试'); web.close(); location.replace('/login'); return { loggedOut: true } as T; }

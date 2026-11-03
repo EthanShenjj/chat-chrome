@@ -10,6 +10,7 @@ import { atomicWrite, credential, readConfig, readJSON } from '../../../packages
 import { withExecutionContext, type ExecutionContext } from '../../../packages/execution-service/context';
 import { aeCredentialRef } from '../../../packages/execution-service/cli-runner/index';
 import { modelRequest } from '../../../packages/execution-service/model-transport/index';
+import { usesVendorReasoning } from '../../../packages/contracts/provider-presets';
 
 const freshSession = (): Session => ({ id: randomUUID(), title: '新的对话', messages: [], history: [], status: 'idle', updatedAt: Date.now() });
 interface WorkspaceData { sessionId: string; sessions: Session[]; providerId: string; }
@@ -156,8 +157,8 @@ export class CloudWorkspace {
     const prompt = tools ? 'Call connection_check with token ae-ok.' : 'Reply OK.';
     const body = provider.protocol === 'openai-responses'
       ? { input: prompt, stream: false, ...(tools ? { tools: [{ type: 'function', ...fn, strict: true }], tool_choice: { type: 'function', name: fn.name } } : {}) }
-      : { messages: [{ role: 'user', content: prompt }], stream: false, ...(tools ? { tools: [{ type: 'function', function: fn }], tool_choice: { type: 'function', function: { name: fn.name } } } : {}) };
-    const response = await modelRequest(provider, provider.protocol === 'openai-responses' ? '/responses' : '/chat/completions', body, AbortSignal.timeout(30000));
+      : { messages: [{ role: 'user', content: prompt }], stream: false, ...(tools ? { tools: [{ type: 'function', function: fn }], tool_choice: usesVendorReasoning(provider) ? 'auto' : { type: 'function', function: { name: fn.name } } } : {}) };
+    const response = await modelRequest(provider, provider.protocol === 'openai-responses' ? '/responses' : '/chat/completions', body, AbortSignal.timeout(90000));
     const result = await response.json() as any; if (!response.ok || result.error) throw new Error(result.error?.message || `HTTP ${response.status}`);
     if (tools) {
       const call = provider.protocol === 'openai-responses' ? result.output?.find((o: any) => o.type === 'function_call') : result.choices?.[0]?.message?.tool_calls?.[0]?.function;

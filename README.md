@@ -64,6 +64,18 @@ npm start
 
 本项目的服务网页登录与 AE CLI Token 是两个独立授权。当前 CLI 不返回可靠的用户 ID，需手动确认 AE Token 与打开的 AE 业务页面对应同一账号、租户和项目。`auth status` 只能确认凭证已配置；AE 服务端在实际请求时验证其有效性。
 
+## DeepSeek / Kimi 连接
+
+在「模型连接」的「快速选择服务商」中选择 DeepSeek、Kimi 国内或 Kimi 国际，自动填写官方基础地址与 Chat Completions 协议。模型名称可按账号实际支持情况修改；各平台的 API Key 不通用。保存后分别测试连接与工具调用。
+
+服务端 `AE_CHAT_ALLOWED_ORIGINS` 需包含对应的官方 origin：`https://api.deepseek.com`、`https://api.moonshot.cn` 或 `https://api.moonshot.ai`。这是模型服务的地址，与「线上服务」填写的本项目 Vercel 地址不同。新增域名后要更新生产网关环境变量并重启 Sandbox，使执行进程加载新配置。
+
+兼容层在 Chat Completions 中保留 DeepSeek/Kimi 的 `reasoning_content`，支持流式拆包、工具调用循环和同一服务商的多轮思考历史；切换服务商不回传原服务商的思考内容。工具测试使用模型自动选用唯一测试工具，避免 Kimi 思考模式拒绝指定函数的 `tool_choice`。
+
+扩展出现 `Receiving end does not exist` 表示扩展后台没有接收到消息，与模型 API Key 无关。关闭旧侧栏/设置页，在 `chrome://extensions` 重新加载 AE Chat Agent 后重新打开。0.2.1 起提供中文说明、重试连接与重新加载扩展入口；不会自动重放用户写入请求。
+
+接口参考：[DeepSeek 首次调用](https://api-docs.deepseek.com/)、[DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/)、[Kimi 快速开始](https://platform.kimi.com/docs/get-api-key)、[Kimi 工具调用约束](https://platform.kimi.com/docs/guide/use-tool-choice)。
+
 ## 网页登录与扩展接续
 
 - 未登录时禁用消息输入和发送，显示“前往网页登录”；服务端也会拒绝未认证的对话请求。
