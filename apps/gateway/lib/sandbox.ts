@@ -1,4 +1,5 @@
 import { Sandbox } from '@vercel/sandbox';
+import { waitForWorker } from './readiness.ts';
 
 export const sandboxRoot = '/vercel/sandbox/ae-chat';
 export function workerEnvironment(): Record<string, string> {
@@ -42,5 +43,9 @@ export async function startWorker(sandbox: Sandbox) {
 export async function executionSandbox() {
   workerEnvironment();
   // Creation is an explicit provisioning step, never an anonymous HTTP side effect.
-  return Sandbox.get({ name: process.env.AE_CHAT_SANDBOX_NAME || 'chat-chrome-production', resume: true, onResume: startWorker });
+  const sandbox = await Sandbox.get({ name: process.env.AE_CHAT_SANDBOX_NAME || 'chat-chrome-production', resume: true, onResume: startWorker });
+  // A concurrent caller can see the resumed VM before its public port is ready.
+  // Probe a read-only endpoint before forwarding any user request, including writes.
+  await waitForWorker(sandbox.domain(3000), workerEnvironment().AE_CHAT_GATEWAY_SECRET);
+  return sandbox;
 }
