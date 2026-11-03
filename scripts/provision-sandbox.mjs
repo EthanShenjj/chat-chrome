@@ -42,10 +42,11 @@ await run('node', ['-e', `
     fs.writeFileSync(path, JSON.stringify([record]), { mode: 0o600, flag: 'wx' });
   }
 `], { env: { AE_CHAT_BOOTSTRAP_RECORD: process.env.AE_CHAT_BOOTSTRAP_RECORD || '' } });
+// Publish the release pointer before stopping. Concurrent gateway traffic may resume
+// the VM immediately; its onResume hook must already point to the new code.
+await run('sh', ['-c', `ln -sfn '${release}' '${sandboxRoot}/next'; mv -Tf '${sandboxRoot}/next' '${sandboxRoot}/current'`]);
 // Snapshot prepared files and stop the old process using Sandbox's own lifecycle.
-// A resumed VM restores files only, so no platform-specific kill utility is needed.
 await sandbox.stop();
 sandbox = await Sandbox.get({ name: sandboxName, resume: true });
-await run('sh', ['-c', `ln -sfn '${release}' '${sandboxRoot}/next'; mv -Tf '${sandboxRoot}/next' '${sandboxRoot}/current'`]);
 await startWorker(sandbox);
 console.log(`Execution service ready: ${sandbox.name} (${revision})`);
